@@ -236,6 +236,19 @@ fn import_handles_entities_void_elements_and_css_function_semicolons() {
     assert!(result.contains("data:image/png;base64,AAAA"));
 }
 #[test]
+fn import_keeps_svg_text_attributes() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    insert(
+        &mut s,
+        &frame,
+        "<svg viewBox=\"0 0 100 20\" xmlns=\"http://www.w3.org/2000/svg\"><text x=\"50\" y=\"14\" text-anchor=\"middle\" font-family=\"Inter\" font-size=\"12\" font-weight=\"600\">Label</text></svg>",
+    );
+    let result = html::document_html(s.file(&fid(&s)).unwrap(), false);
+    assert!(result.contains("text-anchor=\"middle\""));
+    assert!(result.contains("font-weight=\"600\""));
+}
+#[test]
 fn invalid_html_does_not_consume_ids_or_leave_partial_nodes() {
     let mut s = Store::memory();
     let frame = artboard(&mut s);
