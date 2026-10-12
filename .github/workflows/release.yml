@@ -2,6 +2,8 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths: ["desktop/**", "packaging/**", "scripts/package.sh", ".github/workflows/release.yml"]
   workflow_dispatch:
 
 permissions:
