@@ -330,7 +330,14 @@ function Shortcuts({ doc }: { doc: CardboardDocument }) {
       e.clipboardData?.setData('text/plain', html);
       if (e.type === 'cut') edit([{ tool: 'delete_nodes', args: { nodeIds: doc.selection } }]);
     };
+    // On Linux, releasing the middle button pastes the primary selection (whatever text was
+    // last highlighted). The middle button pans the canvas here, so drop those pastes.
+    let middleReleasedAt = -Infinity;
+    const pointerUp = (e: PointerEvent) => {
+      if (e.button === 1) middleReleasedAt = performance.now();
+    };
     const paste = (e: ClipboardEvent) => {
+      if (performance.now() - middleReleasedAt < 500) return e.preventDefault();
       if (isTyping(e as unknown as KeyboardEvent) || engineRef.current?.isEditingText) return;
       const dt = e.clipboardData;
       if (!dt) return;
@@ -366,7 +373,9 @@ function Shortcuts({ doc }: { doc: CardboardDocument }) {
     window.addEventListener('copy', copy);
     window.addEventListener('cut', copy);
     window.addEventListener('paste', paste);
+    window.addEventListener('pointerup', pointerUp, true);
     return () => {
+      window.removeEventListener('pointerup', pointerUp, true);
       window.removeEventListener('keydown', key);
       window.removeEventListener('copy', copy);
       window.removeEventListener('cut', copy);
