@@ -1,0 +1,9 @@
+/target/
+/desktop/target/
+*.cardboard.json
+*.sock
+/.local-reference/
+
+/ui/node_modules/
+/ui/dist/
+__pycache__/

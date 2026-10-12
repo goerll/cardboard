@@ -1,0 +1,21 @@
+[package]
+name = "cardboard-desktop"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+cardboard = { path = ".." }
+cef = "=154.5.0"
+serde_json = "1.0.149"
+tokio = { version = "1.52", features = ["rt-multi-thread", "net", "io-util", "time"] }
+
+[package.metadata.cef.bundle]
+helper_name = "cardboard_helper"
+
+[workspace]
+
+[profile.dev.package.cardboard-desktop]
+opt-level = 2
+[profile.dev.package.cardboard]
+opt-level = 2

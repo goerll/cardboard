@@ -1,0 +1,619 @@
+use cardboard::{document::Store, html, store, tools};
+use serde_json::{Value, json};
+
+fn edit(s: &mut Store, name: &str, args: Value) -> Value {
+    tools::call(s, name, &args).unwrap()
+}
+fn fid(s: &Store) -> String {
+    s.active_file.clone().unwrap()
+}
+
+#[test]
+fn imported_heading_entities_remain_one_editable_text_layer() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let heading = insert(&mut s, &frame, "<h1>Hello &amp; goodbye</h1>")[0].clone();
+    let node = s.file(&fid(&s)).unwrap().node(&heading).unwrap();
+    assert_eq!(node.text, "Hello & goodbye");
+    assert!(node.children.is_empty());
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":heading,"textContent":"New heading"}]}),
+    );
+    assert!(html::document_html(s.file(&fid(&s)).unwrap(), false).contains(">New heading</h1>"));
+}
+
+#[test]
+fn creating_a_page_in_an_empty_file_and_undoing_it_succeed() {
+    let mut s = Store::memory();
+    let first = fid(&s);
+    let page = edit(&mut s, "create_page", json!({"name":"Second"}));
+    assert_ne!(page["pageId"], "page-1");
+    let file = edit(&mut s, "create_file", json!({"name":"Another"}));
+    assert_eq!(s.active_file.as_deref(), file["fileId"].as_str());
+    assert!(tools::call(&mut s, "undo", &json!({})).is_err());
+    edit(&mut s, "open_file", json!({"fileId":first}));
+    edit(&mut s, "undo", json!({}));
+    assert_eq!(s.file(&first).unwrap().pages.len(), 1);
+    edit(&mut s, "redo", json!({}));
+    assert_eq!(s.file(&first).unwrap().pages.len(), 2);
+    assert_eq!(s.files.len(), 2);
+}
+#[test]
+fn removing_a_style_changes_export_and_invalid_id_counters_are_rejected() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[frame],"styles":{"backgroundColor":"red"}}]}),
+    );
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[frame],"styles":{"backgroundColor":""}}]}),
+    );
+    let id = fid(&s);
+    let doc = &mut s.files.get_mut(&id).unwrap().doc;
+    assert!(
+        !doc.node(&frame)
+            .unwrap()
+            .styles
+            .contains_key("background-color")
+    );
+    assert!(!html::document_html(doc, false).contains("background-color:red"));
+    doc.next_id = 1;
+    assert!(doc.validate().is_err());
+}
+fn artboard(s: &mut Store) -> String {
+    edit(
+        s,
+        "create_artboard",
+        json!({"name":"Desktop","styles":{"width":"1440px","height":"900px"}}),
+    )["nodeId"]
+        .as_str()
+        .unwrap()
+        .into()
+}
+fn insert(s: &mut Store, parent: &str, html: &str) -> Vec<String> {
+    serde_json::from_value(
+        edit(
+            s,
+            "write_html",
+            json!({"html":html,"targetNodeId":parent,"mode":"insert-children"}),
+        )["nodeIds"]
+            .clone(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn atomic_batch_rolls_back_all_changes_on_missing_node() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let revision = s.file(&fid(&s)).unwrap().revision;
+    let result = tools::call(
+        &mut s,
+        "update_styles",
+        &json!({"updates":[{"nodeIds":[frame,"missing"],"styles":{"backgroundColor":"red"}}]}),
+    );
+    assert!(result.is_err());
+    let doc = s.file(&fid(&s)).unwrap();
+    assert_eq!(doc.revision, revision);
+    assert!(
+        !doc.node(&frame)
+            .unwrap()
+            .styles
+            .contains_key("background-color")
+    );
+}
+#[test]
+fn reparenting_cannot_create_cycles_and_preserves_ids() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let child = insert(&mut s, &frame, "<div><p>Hello</p></div>")[0].clone();
+    let before = s.file(&fid(&s)).unwrap().clone();
+    assert!(
+        tools::call(
+            &mut s,
+            "move_nodes",
+            &json!({"moves":[{"nodeId":frame,"parentId":child}]})
+        )
+        .is_err()
+    );
+    assert_eq!(*s.file(&fid(&s)).unwrap(), before);
+    edit(
+        &mut s,
+        "move_nodes",
+        json!({"moves":[{"nodeId":child,"parentId":"root","index":0}]}),
+    );
+    assert_eq!(s.file(&fid(&s)).unwrap().pages[0].artboards[0].id, child);
+}
+#[test]
+fn duplicate_rekeys_every_descendant() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    insert(&mut s, &frame, "<div><span>Original</span></div>");
+    let copy =
+        edit(&mut s, "duplicate_nodes", json!({"nodes":[{"id":frame}]}))["duplicates"][0]["nodeId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+    let d = s.file(&fid(&s)).unwrap();
+    let a = d.node(&frame).unwrap();
+    let b = d.node(&copy).unwrap();
+    assert_ne!(a.id, b.id);
+    assert_ne!(a.children[0].id, b.children[0].id);
+    assert_eq!(a.count(), b.count());
+    d.validate().unwrap();
+}
+#[test]
+fn undo_redo_preserves_monotonic_revisions_and_never_reuses_ids() {
+    let mut s = Store::memory();
+    let a = artboard(&mut s);
+    let r = s.file(&fid(&s)).unwrap().revision;
+    {
+        let id = fid(&s);
+        s.undo(&id).unwrap()
+    };
+    assert!(s.file(&fid(&s)).unwrap().revision > r);
+    {
+        let id = fid(&s);
+        s.redo(&id).unwrap()
+    };
+    assert!(s.file(&fid(&s)).unwrap().node(&a).is_ok());
+    {
+        let id = fid(&s);
+        s.undo(&id).unwrap()
+    };
+    let b = artboard(&mut s);
+    assert_ne!(a, b);
+    assert!(s.redo(&fid(&s)).is_err());
+}
+#[test]
+fn explicit_file_target_is_independent_of_active_tab() {
+    let mut s = Store::memory();
+    let one = fid(&s);
+    let first = artboard(&mut s);
+    let second = edit(&mut s, "create_file", json!({"name":"Other"}))["fileId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    edit(&mut s, "open_file", json!({"fileId":second}));
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"fileId":one,"updates":[{"nodeIds":[first],"styles":{"color":"red"}}]}),
+    );
+    assert_eq!(s.active_file.as_ref(), Some(&second));
+    assert_eq!(
+        s.file(&one).unwrap().node(&first).unwrap().styles["color"],
+        "red"
+    );
+    assert!(
+        tools::call(
+            &mut s,
+            "get_node_info",
+            &json!({"fileId":second,"nodeId":first})
+        )
+        .is_err()
+    );
+}
+#[test]
+fn stale_revision_rejects_an_edit_without_changing_history() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    assert!(
+        tools::call(
+            &mut s,
+            "update_styles",
+            &json!({"expectedRevision":0,"updates":[{"nodeIds":[frame],"styles":{"color":"red"}}]})
+        )
+        .is_err()
+    );
+    assert_eq!(s.file(&fid(&s)).unwrap().revision, 1);
+    {
+        let id = fid(&s);
+        s.undo(&id).unwrap()
+    };
+    assert!(s.file(&fid(&s)).unwrap().pages[0].artboards.is_empty());
+}
+#[test]
+fn import_handles_entities_void_elements_and_css_function_semicolons() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    insert(
+        &mut s,
+        &frame,
+        "<div layer-name=\"Photo\" style=\"background-image:url('data:image/png;base64,AAAA');padding:16px\"><img src=\"https://example.com/a.png\" />Hello &amp; goodbye</div>",
+    );
+    let doc = s.file(&fid(&s)).unwrap();
+    let result = html::document_html(doc, false);
+    assert!(result.contains("Hello "));
+    assert!(result.contains("&amp;"));
+    assert!(!result.contains("data-cardboard-id"));
+    assert!(result.contains("data:image/png;base64,AAAA"));
+}
+#[test]
+fn invalid_html_does_not_consume_ids_or_leave_partial_nodes() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let before = s.file(&fid(&s)).unwrap().clone();
+    assert!(
+        tools::call(
+            &mut s,
+            "write_html",
+            &json!({"html":"<div><span>unfinished","targetNodeId":frame,"mode":"insert-children"})
+        )
+        .is_err()
+    );
+    assert_eq!(*s.file(&fid(&s)).unwrap(), before);
+}
+#[test]
+fn imported_designs_cannot_execute_scripts_or_break_style_blocks() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    for fragment in [
+        "<script>alert(1)</script>",
+        "<div onclick=\"alert(1)\"></div>",
+        "<a href=\"javascript:alert(1)\">Link</a>",
+        "<iframe srcdoc=\"bad\"></iframe>",
+    ] {
+        assert!(
+            tools::call(
+                &mut s,
+                "write_html",
+                &json!({"html":fragment,"targetNodeId":frame,"mode":"insert-children"})
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        tools::call(
+            &mut s,
+            "create_tokens",
+            &json!({"tokens":[{"name":"--bad","value":"</style><script>bad</script>"}]})
+        )
+        .is_err()
+    );
+    assert!(html::parse_styles("color: red; background: black").is_ok());
+    assert!(html::validate_style("color", "red;background:black").is_err());
+}
+#[test]
+fn token_rename_updates_aliases_and_authored_references() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    edit(
+        &mut s,
+        "create_tokens",
+        json!({"tokens":[{"name":"--color-brand","value":"#326bfa"},{"name":"--color-link","value":"var(--color-brand)"}]}),
+    );
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[frame],"styles":{"color":"var(--color-brand)"}}]}),
+    );
+    edit(
+        &mut s,
+        "set_tokens",
+        json!({"tokens":[{"name":"--color-brand","newName":"--color-primary"}]}),
+    );
+    let d = s.file(&fid(&s)).unwrap();
+    assert_eq!(
+        d.node(&frame).unwrap().styles["color"],
+        "var(--color-primary)"
+    );
+    assert_eq!(d.tokens["--color-link"], "var(--color-primary)");
+    assert!(
+        tools::call(
+            &mut s,
+            "create_tokens",
+            &json!({"tokens":[{"name":"--color-primary","value":"red"}]})
+        )
+        .is_err()
+    );
+}
+#[test]
+fn deleting_an_ancestor_and_descendant_in_one_batch_succeeds() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let child = insert(&mut s, &frame, "<div>Child</div>")[0].clone();
+    edit(&mut s, "delete_nodes", json!({"nodeIds":[frame,child]}));
+    assert!(s.file(&fid(&s)).unwrap().pages[0].artboards.is_empty());
+    {
+        let id = fid(&s);
+        s.undo(&id).unwrap()
+    };
+    assert!(s.file(&fid(&s)).unwrap().node(&child).is_ok());
+}
+#[test]
+fn save_failure_rolls_back_edit_and_history() {
+    let dir = temp_dir("save-failure");
+    let path = dir.join("design.cardboard");
+    let mut s = Store::open_document(&path).unwrap();
+    let frame = artboard(&mut s);
+    let before = s.file(&fid(&s)).unwrap().clone();
+    // A directory cannot be replaced by the atomic file rename.
+    let id = fid(&s);
+    s.files.get_mut(&id).unwrap().path = Some(dir.clone());
+    assert!(
+        tools::call(
+            &mut s,
+            "update_styles",
+            &json!({"updates":[{"nodeIds":[frame],"styles":{"color":"red"}}]})
+        )
+        .is_err()
+    );
+    assert_eq!(*s.file(&id).unwrap(), before);
+    s.files.get_mut(&id).unwrap().path = Some(path);
+    s.undo(&id).unwrap();
+    assert!(s.file(&id).unwrap().pages[0].artboards.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn saved_file_reopens_with_export_fidelity() {
+    let dir = temp_dir("reopen");
+    let path = dir.join("design.cardboard");
+    let mut s = Store::open_document(&path).unwrap();
+    let frame = artboard(&mut s);
+    insert(
+        &mut s,
+        &frame,
+        "<h1 style=\"font-size:32px;color:oklch(60% 0.2 240)\">Hello</h1>",
+    );
+    let reopened = Store::open_document(&path).unwrap();
+    assert_eq!(
+        html::document_html(s.file(&fid(&s)).unwrap(), false),
+        html::document_html(reopened.file(&fid(&reopened)).unwrap(), false)
+    );
+    let raw: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(raw["format"], "cardboard");
+    assert_eq!(raw["version"], 2);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("cardboard-test-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+#[test]
+fn batch_is_one_atomic_undo_step() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let id = fid(&s);
+    let revision = s.file(&id).unwrap().revision;
+    let result = edit(
+        &mut s,
+        "batch",
+        json!({"operations":[
+            {"tool":"write_html","args":{"html":"<p layer-name=\"Intro\">Hi</p>","targetNodeId":frame,"mode":"insert-children"}},
+            {"tool":"update_styles","args":{"updates":[{"nodeIds":[frame],"styles":{"gap":"8px"}}]}},
+        ]}),
+    );
+    let child = result["results"][0]["nodeIds"][0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(s.file(&id).unwrap().node(&child).unwrap().name, "Intro");
+    assert_eq!(s.file(&id).unwrap().revision, revision + 1);
+    s.undo(&id).unwrap();
+    let doc = s.file(&id).unwrap();
+    assert!(doc.node(&child).is_err() && !doc.node(&frame).unwrap().styles.contains_key("gap"));
+    // A failing operation rolls back the earlier ones.
+    let before = s.file(&id).unwrap().clone();
+    assert!(
+        tools::call(
+            &mut s,
+            "batch",
+            &json!({"operations":[
+                {"tool":"update_styles","args":{"updates":[{"nodeIds":[frame],"styles":{"gap":"8px"}}]}},
+                {"tool":"delete_nodes","args":{"nodeIds":["missing"]}},
+            ]})
+        )
+        .is_err()
+    );
+    assert_eq!(*s.file(&id).unwrap(), before);
+    assert!(tools::call(&mut s, "batch", &json!({"operations":[{"tool":"undo"}]})).is_err());
+}
+#[test]
+fn selection_and_page_changes_skip_history_and_revisions() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let id = fid(&s);
+    let (revision, generation) = (s.file(&id).unwrap().revision, s.generation);
+    let seq = s.files[&id].seq;
+    edit(&mut s, "select_nodes", json!({"nodeIds":[frame]}));
+    assert_eq!(s.file(&id).unwrap().selection, vec![frame.clone()]);
+    assert_eq!(s.file(&id).unwrap().revision, revision);
+    assert!(s.generation > generation && s.files[&id].seq > seq);
+    let page = edit(&mut s, "create_page", json!({"name":"Two"}))["pageId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    edit(&mut s, "set_active_page", json!({"pageId":page}));
+    assert!(tools::call(&mut s, "select_nodes", &json!({"nodeIds":["missing"]})).is_err());
+    // Undo reverts the page creation, not the page switch; the view falls back to a real page.
+    s.undo(&id).unwrap();
+    let doc = s.file(&id).unwrap();
+    assert_eq!(doc.pages.len(), 1);
+    assert_eq!(doc.active_page, "page-1");
+}
+#[test]
+fn page_background_and_positions_round_trip() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let id = fid(&s);
+    edit(
+        &mut s,
+        "update_pages",
+        json!({"updates":[{"pageId":"page-1","background":"#101010","name":"Main"}]}),
+    );
+    assert!(
+        tools::call(
+            &mut s,
+            "update_pages",
+            &json!({"updates":[{"pageId":"page-1","background":"red;x:y"}]})
+        )
+        .is_err()
+    );
+    edit(
+        &mut s,
+        "set_positions",
+        json!({"updates":[{"nodeId":frame,"x":120,"y":-40}]}),
+    );
+    let doc = s.file(&id).unwrap();
+    assert_eq!(doc.pages[0].background.as_deref(), Some("#101010"));
+    assert_eq!(doc.pages[0].artboards[0].position, Some([120.0, -40.0]));
+    let child = insert(&mut s, &frame, "<div>a</div>")[0].clone();
+    assert!(
+        tools::call(
+            &mut s,
+            "set_positions",
+            &json!({"updates":[{"nodeId":child,"x":1,"y":1}]})
+        )
+        .is_err()
+    );
+    let second = insert(&mut s, &frame, "<p>b</p>")[0].clone();
+    let first = edit(
+        &mut s,
+        "write_html",
+        json!({"html":"<span>c</span>","targetNodeId":frame,"mode":"insert-children","index":0}),
+    )["nodeIds"][0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let kids: Vec<_> = s
+        .file(&id)
+        .unwrap()
+        .node(&frame)
+        .unwrap()
+        .children
+        .iter()
+        .map(|n| n.id.clone())
+        .collect();
+    assert_eq!(kids, vec![first, child, second]);
+}
+#[test]
+fn library_files_archive_restore_and_legacy_import() {
+    let dir = temp_dir("library");
+    let legacy = dir.join("workspace.json");
+    let mut doc = cardboard::document::Document::new("file-1".into(), "Old design");
+    doc.revision = 3;
+    std::fs::write(
+        &legacy,
+        serde_json::to_vec(
+            &json!({"formatVersion":1,"nextFile":2,"activeFile":"file-1","files":{"file-1":doc}}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let library = dir.join("lib");
+    let mut s = Store::library(&library, Some(&legacy)).unwrap();
+    let files = edit(&mut s, "list_files", json!({}))["files"].clone();
+    assert_eq!(files.as_array().unwrap().len(), 1);
+    assert_eq!(files[0]["name"], "Old design");
+    let created = edit(&mut s, "create_file", json!({"name":"New one"}));
+    let path = created["path"].as_str().unwrap().to_owned();
+    assert!(path.ends_with("New one.cardboard"));
+    artboard(&mut s);
+    s.flush().unwrap();
+    edit(&mut s, "rename_file", json!({"name":"Renamed"}));
+    let path = s.path_of(&fid(&s)).unwrap().clone();
+    assert!(path.ends_with("Renamed.cardboard"));
+    let archived = edit(&mut s, "archive_file", json!({"path":path}))["path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(s.files.is_empty() && s.active_file.is_none());
+    assert_eq!(
+        edit(&mut s, "list_files", json!({"archived":true}))["files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(tools::call(&mut s, "delete_file", &json!({"path":files[0]["path"]})).is_err());
+    let restored = edit(&mut s, "restore_file", json!({"path":archived}))["path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let opened = edit(&mut s, "open_file", json!({"path":restored}));
+    assert_eq!(
+        s.file(opened["fileId"].as_str().unwrap()).unwrap().pages[0]
+            .artboards
+            .len(),
+        1
+    );
+    assert!(tools::call(&mut s, "open_file", &json!({"path":legacy})).is_err());
+    assert!(tools::call(&mut s, "archive_file", &json!({"path":"/etc/passwd"})).is_err());
+    s.flush().unwrap();
+    // Tabs come back; the legacy workspace is not imported twice.
+    let again = Store::library(&library, Some(&legacy)).unwrap();
+    assert_eq!(again.tabs.len(), 1);
+    assert_eq!(again.scan(false).len(), 2);
+    let _ = store::EXTENSION;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn public_tool_schemas_are_valid_sdk_tools_and_unique() {
+    let definitions = tools::definitions();
+    let mut names = std::collections::BTreeSet::new();
+    for def in definitions {
+        assert!(names.insert(def["name"].as_str().unwrap().to_owned()));
+        serde_json::from_value::<rmcp::model::Tool>(def).unwrap();
+    }
+    assert!(
+        names.contains("write_html") && names.contains("batch") && names.contains("list_files")
+    );
+    assert!(!names.contains("get_computed_styles"));
+    assert!(!names.contains("get_screenshot"));
+}
+
+#[test]
+fn alt_drag_duplicate_places_copies_in_one_undo_step() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let ids = insert(&mut s, &frame, "<div>a</div><div>b</div>");
+    let copy = edit(
+        &mut s,
+        "duplicate_nodes",
+        json!({"nodes":[{"id":ids[0],"parentId":frame,"index":2,"styles":{"color":"red"}}]}),
+    )["duplicates"][0]["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let doc = s.file(&fid(&s)).unwrap();
+    let children: Vec<_> = doc
+        .node(&frame)
+        .unwrap()
+        .children
+        .iter()
+        .map(|c| c.id.clone())
+        .collect();
+    assert_eq!(children, vec![ids[0].clone(), ids[1].clone(), copy.clone()]);
+    assert_eq!(
+        doc.node(&copy)
+            .unwrap()
+            .styles
+            .get("color")
+            .map(String::as_str),
+        Some("red")
+    );
+
+    let ab = edit(
+        &mut s,
+        "duplicate_nodes",
+        json!({"nodes":[{"id":frame,"x":2000,"y":50}]}),
+    )["duplicates"][0]["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        s.file(&fid(&s)).unwrap().node(&ab).unwrap().position,
+        Some([2000.0, 50.0])
+    );
+    edit(&mut s, "undo", json!({}));
+    assert!(s.file(&fid(&s)).unwrap().node(&ab).is_err());
+}
