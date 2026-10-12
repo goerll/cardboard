@@ -51,25 +51,38 @@ define_class!(
 /// Must run before CEF initializes: makes NSApp an instance of our subclass.
 pub fn setup_application() {
     let mtm = MainThreadMarker::new().expect("must run on the main thread");
-    let app: Retained<NSApplication> = unsafe { msg_send![CardboardApplication::class(), sharedApplication] };
+    let app: Retained<NSApplication> =
+        unsafe { msg_send![CardboardApplication::class(), sharedApplication] };
     let menubar = unsafe { NSMenu::new(mtm) };
-    unsafe { menubar.addItem(&submenu(mtm, "Cardboard", &[("Quit Cardboard", sel!(terminate:), "q", false)])) };
-    unsafe { menubar.addItem(&submenu(
-        mtm,
-        "Edit",
-        &[
-            ("Undo", sel!(undo:), "z", false),
-            ("Redo", sel!(redo:), "z", true),
-            ("Cut", sel!(cut:), "x", false),
-            ("Copy", sel!(copy:), "c", false),
-            ("Paste", sel!(paste:), "v", false),
-            ("Select All", sel!(selectAll:), "a", false),
-        ],
-    )) };
+    unsafe {
+        menubar.addItem(&submenu(
+            mtm,
+            "Cardboard",
+            &[("Quit Cardboard", sel!(terminate:), "q", false)],
+        ))
+    };
+    unsafe {
+        menubar.addItem(&submenu(
+            mtm,
+            "Edit",
+            &[
+                ("Undo", sel!(undo:), "z", false),
+                ("Redo", sel!(redo:), "z", true),
+                ("Cut", sel!(cut:), "x", false),
+                ("Copy", sel!(copy:), "c", false),
+                ("Paste", sel!(paste:), "v", false),
+                ("Select All", sel!(selectAll:), "a", false),
+            ],
+        ))
+    };
     unsafe { app.setMainMenu(Some(&menubar)) };
 }
 
-fn submenu(mtm: MainThreadMarker, title: &str, items: &[(&str, Sel, &str, bool)]) -> Retained<NSMenuItem> {
+fn submenu(
+    mtm: MainThreadMarker,
+    title: &str,
+    items: &[(&str, Sel, &str, bool)],
+) -> Retained<NSMenuItem> {
     let menu = unsafe { NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(title)) };
     for &(label, action, key, shift) in items {
         let item = unsafe {
@@ -81,7 +94,11 @@ fn submenu(mtm: MainThreadMarker, title: &str, items: &[(&str, Sel, &str, bool)]
             )
         };
         if shift {
-            unsafe { item.setKeyEquivalentModifierMask(NSEventModifierFlags::Command | NSEventModifierFlags::Shift) };
+            unsafe {
+                item.setKeyEquivalentModifierMask(
+                    NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
+                )
+            };
         }
         unsafe { menu.addItem(&item) };
     }

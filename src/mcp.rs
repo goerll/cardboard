@@ -128,7 +128,9 @@ pub async fn serve_socket(listener: Listener, store: SharedStore) -> std::io::Re
 pub async fn serve_socket(listener: Listener, store: SharedStore) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
     // first_pipe_instance fails if another editor already owns the name.
-    let mut server = ServerOptions::new().first_pipe_instance(true).create(&listener.0)?;
+    let mut server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(&listener.0)?;
     loop {
         server.connect().await?;
         let connected = server;

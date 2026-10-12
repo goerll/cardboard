@@ -9,15 +9,22 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn start(runtime: &tokio::runtime::Runtime, library: Option<PathBuf>) -> Result<Self, String> {
+    pub fn start(
+        runtime: &tokio::runtime::Runtime,
+        library: Option<PathBuf>,
+    ) -> Result<Self, String> {
         let library = library.unwrap_or_else(Store::default_library);
         let store = Store::library(&library, Some(&Store::legacy_workspace()))?;
         let hub = Hub::new(store);
         // Bind before opening the window, so a second editor cannot unlink a live socket.
         let socket = cardboard::mcp::default_socket();
         // bind_socket reclaims a socket file left behind by a crashed editor.
-        let listener = cardboard::mcp::bind_socket(&socket)
-            .map_err(|e| format!("Cannot bind {}: {e}. Is Cardboard already running?", socket.display()))?;
+        let listener = cardboard::mcp::bind_socket(&socket).map_err(|e| {
+            format!(
+                "Cannot bind {}: {e}. Is Cardboard already running?",
+                socket.display()
+            )
+        })?;
         let url = runtime.block_on(async {
             hub.spawn_autosave();
             let shared = hub.clone();

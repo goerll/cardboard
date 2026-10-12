@@ -9,7 +9,9 @@ static ORIGIN: OnceLock<String> = OnceLock::new();
 static DEVTOOLS: OnceLock<bool> = OnceLock::new();
 
 fn same_origin(url: &str) -> bool {
-    ORIGIN.get().is_some_and(|o| url == o || url.starts_with(&format!("{o}/")))
+    ORIGIN
+        .get()
+        .is_some_and(|o| url == o || url.starts_with(&format!("{o}/")))
         || url.starts_with("devtools://")
         || url.starts_with("blob:")
         || url.starts_with("data:")
@@ -24,7 +26,9 @@ fn open_external(url: &str) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(windows)]
-    let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    let _ = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn();
 }
 
 /// The native event type CEF passes to keyboard handlers differs per platform.
@@ -163,7 +167,11 @@ pub fn subprocess() -> Option<i32> {
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
     let args = Args::new();
     let mut app = ShellApp::new();
-    let code = execute_process(Some(args.as_main_args()), Some(&mut app), std::ptr::null_mut());
+    let code = execute_process(
+        Some(args.as_main_args()),
+        Some(&mut app),
+        std::ptr::null_mut(),
+    );
     (code >= 0).then_some(code)
 }
 
@@ -182,7 +190,13 @@ pub fn run(url: &str, devtools: bool) -> Result<(), String> {
         no_sandbox: (!cfg!(target_os = "linux")).into(),
         ..Default::default()
     };
-    if initialize(Some(args.as_main_args()), Some(&settings), Some(&mut app), std::ptr::null_mut()) != 1 {
+    if initialize(
+        Some(args.as_main_args()),
+        Some(&settings),
+        Some(&mut app),
+        std::ptr::null_mut(),
+    ) != 1
+    {
         return Err("Chromium failed to initialize".into());
     }
     let browser_view = browser_view_create(
@@ -194,7 +208,8 @@ pub fn run(url: &str, devtools: bool) -> Result<(), String> {
         Some(&mut ShellBrowserView::new()),
     )
     .ok_or("Could not create the editor view")?;
-    window_create_top_level(Some(&mut ShellWindow::new(browser_view))).ok_or("Could not create the window")?;
+    window_create_top_level(Some(&mut ShellWindow::new(browser_view)))
+        .ok_or("Could not create the window")?;
     run_message_loop();
     shutdown();
     Ok(())
@@ -206,15 +221,32 @@ fn cache_dir() -> std::path::PathBuf {
     if cfg!(target_os = "macos") {
         home.join("Library/Caches/Cardboard")
     } else if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(|| home.join("AppData/Local")).join("Cardboard")
+        std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Local"))
+            .join("Cardboard")
     } else {
-        std::env::var_os("XDG_CACHE_HOME").map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".cache")).join("cardboard")
+        std::env::var_os("XDG_CACHE_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| home.join(".cache"))
+            .join("cardboard")
     }
 }
 
 /// "cardboard" as a borrowed CEF string over a leaked, process-lifetime UTF-16 buffer.
 fn app_id() -> CefString {
     static BUF: OnceLock<&'static [u16]> = OnceLock::new();
-    let buf = BUF.get_or_init(|| Box::leak("cardboard".encode_utf16().collect::<Vec<_>>().into_boxed_slice()));
-    CefString::from(sys::_cef_string_utf16_t { str_: buf.as_ptr() as *mut _, length: buf.len(), dtor: None })
+    let buf = BUF.get_or_init(|| {
+        Box::leak(
+            "cardboard"
+                .encode_utf16()
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        )
+    });
+    CefString::from(sys::_cef_string_utf16_t {
+        str_: buf.as_ptr() as *mut _,
+        length: buf.len(),
+        dtor: None,
+    })
 }

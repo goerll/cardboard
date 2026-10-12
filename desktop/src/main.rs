@@ -16,7 +16,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let value = |name: &str| {
         args.iter().enumerate().find_map(|(i, a)| {
-            a.strip_prefix(&format!("{name}=")).map(String::from).or_else(|| (a == name).then(|| args.get(i + 1).cloned()).flatten())
+            a.strip_prefix(&format!("{name}="))
+                .map(String::from)
+                .or_else(|| (a == name).then(|| args.get(i + 1).cloned()).flatten())
         })
     };
     let library = value("--library").map(PathBuf::from);

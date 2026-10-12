@@ -10,11 +10,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path_option = |name: &str| option(name).map(PathBuf::from);
     if command == "mcp" && option("--document").is_none() {
         let path = path_option("--socket").unwrap_or_else(cardboard::mcp::default_socket);
-        let fail = |e: std::io::Error| format!("Cannot connect to Cardboard at {}: {e}. Open the desktop app or `cardboard serve`, or use mcp --document PATH for standalone editing.", path.display());
+        let fail = |e: std::io::Error| {
+            format!(
+                "Cannot connect to Cardboard at {}: {e}. Open the desktop app or `cardboard serve`, or use mcp --document PATH for standalone editing.",
+                path.display()
+            )
+        };
         #[cfg(unix)]
         let stream = tokio::net::UnixStream::connect(&path).await.map_err(fail)?;
         #[cfg(windows)]
-        let stream = tokio::net::windows::named_pipe::ClientOptions::new().open(&path).map_err(fail)?;
+        let stream = tokio::net::windows::named_pipe::ClientOptions::new()
+            .open(&path)
+            .map_err(fail)?;
         let (mut reader, mut writer) = tokio::io::split(stream);
         let mut input = tokio::io::stdin();
         let mut output = tokio::io::stdout();
@@ -84,7 +91,9 @@ fn open_browser(url: &str) {
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(windows)]
-    let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    let _ = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     open_browser_linux(url);
 }
