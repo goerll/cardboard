@@ -1,71 +1,129 @@
+<div align="center">
+
+<img src="assets/cardboard.svg" width="128" alt="Cardboard app icon" />
+
 # Cardboard
 
-<img src="assets/cardboard.svg" width="96" alt="Cardboard icon" />
+**Hand the pencil to your agent.**
 
-An open source, local-first HTML/CSS design editor with an MCP interface so agents can edit the same files you do. MIT licensed. No account, no cloud: your designs are `.cardboard` files in a folder.
+A free, open source design editor where you and your AI agent work on the same canvas.<br />
+Every layer is real HTML and CSS, and every file stays on your machine.
 
-## Run it
+[Website](https://cardboard.goerll.dev) · [Download](https://github.com/goerll/cardboard/releases/latest) · [MCP docs](docs/mcp.md) · [Architecture](docs/architecture.md)
+
+<br />
+
+<img src="assets/screenshot.png" alt="Cardboard editing a mobile menu design while an agent duplicates cards over MCP" />
+
+</div>
+
+## Why Cardboard
+
+- **Real HTML, real CSS.** Flexbox, gradients, shadows and fonts render in an actual browser engine. What you draw is what ships, and any layer exports as HTML or JSX.
+- **Agents in the room.** Cardboard ships an MCP server (Model Context Protocol, the standard way AI agents call tools). Point Claude Code, Codex, Cursor or any MCP client at it and watch the agent edit your canvas live, in small steps you can steer.
+- **Same canvas, same undo.** Your edits and the agent's go through one engine, so `Ctrl Z` undoes either.
+- **Files you own.** Designs are plain `.cardboard` files in `~/Documents/Cardboard`. No account, no cloud, works offline. Back them up, sync them, put them in git.
+
+## Install
+
+**macOS and Linux**
 
 ```sh
-./scripts/run-desktop.sh                    # desktop app, library at ~/Documents/Cardboard
-./scripts/run-desktop.sh --library ~/designs
-cargo run --release -- serve --open         # same editor in your normal browser
+curl -fsSL https://cardboard.goerll.dev/install.sh | sh
 ```
 
-The first desktop build downloads the CEF browser runtime and needs CMake, Ninja and a C/C++ compiler. The UI needs Node 20+ (`run-desktop.sh` builds it when sources change; otherwise run `npm --prefix ui install && npm --prefix ui run build` before `cargo build`, because the server embeds `ui/dist`).
+**Windows** (PowerShell)
 
-On first run, a v1 workspace at `~/.local/share/cardboard/workspace.json` is imported into the library as `.cardboard` files. The original is left untouched.
+```powershell
+irm https://cardboard.goerll.dev/install.ps1 | iex
+```
 
-## How it fits together
+Run the same command again to update. The installer puts the desktop app where your system expects it (app launcher on Linux, `Applications` on macOS, Start menu on Windows) and the `cardboard` command on your PATH. Prefer to do it by hand? Grab an archive from [Releases](https://github.com/goerll/cardboard/releases/latest).
+
+| Platform | Build | Installs to |
+| --- | --- | --- |
+| Linux x64 | `cardboard-linux-x64.tar.gz` | `~/.local/share/cardboard` |
+| macOS Apple Silicon / Intel | `cardboard-macos-arm64.zip` / `cardboard-macos-x64.zip` | `/Applications` (or `~/Applications`) |
+| Windows x64 | `cardboard-windows-x64.zip` | `%LOCALAPPDATA%\Programs\Cardboard` |
+
+> The macOS build is not notarized by Apple yet. The install script clears the download flag so it opens normally. If you unzip it by hand, right click the app and pick **Open** the first time.
+
+## Connect your agent
+
+Keep Cardboard open, then add it as an MCP server. With Claude Code:
+
+```sh
+claude mcp add cardboard -- cardboard mcp
+```
+
+Any other MCP client takes the same command:
+
+```json
+{ "mcpServers": { "cardboard": { "command": "cardboard", "args": ["mcp"] } } }
+```
+
+`cardboard mcp` relays the agent to the running app (over a Unix socket on macOS and Linux, a named pipe on Windows). To let an agent edit one file without the app open: `cardboard mcp --document design.cardboard`. The full tool list is in [docs/mcp.md](docs/mcp.md).
+
+## Using it
+
+- **Dashboard:** Recents, Files, Archive, Settings, search (`Ctrl F`), grid or list view, new file (`Ctrl N`).
+- **Canvas:** click selects, click again drills into children, `Ctrl` click selects the deepest layer, double click edits text. Drag reorders inside auto layout; hold `Ctrl` while dragging to nest into a sibling; `Alt` drag duplicates. `Space` or middle mouse pans, `Ctrl` scroll zooms, `Shift 1` fits.
+- **Tools:** `V` select, `H` hand, `F` frame, `R` rectangle, `T` text. `Ctrl /` lists every shortcut.
+- **Inspector:** layout (fixed, fit, fill), flex, padding, typography, radius, fills (solid, gradient, image), borders, shadows, filters, raw CSS, HTML and JSX export.
+
+Prefer your own browser? `cardboard serve --open` runs the same editor in a tab.
+
+## How it works
 
 ```
-┌──────────── desktop (CEF window) or any browser ────────────┐
+┌──────────── desktop window (Chromium) or any browser ────────┐
 │  React UI: dashboard, tabs, layers, inspector, canvas        │
 │  canvas = same-origin iframe (your design, real Blink        │
 │  layout) + transparent overlay for selection and gestures    │
 └──────────────── WebSocket (127.0.0.1, random token) ─────────┘
                               │
-┌──────────── Rust core (`cardboard serve` / desktop) ─────────┐
-│  Hub: library of .cardboard files, per-file undo,            │
-│  debounced atomic saves, one command engine (tools::call)    │
-└──────────────── Unix socket ── `cardboard mcp` ── agents ────┘
+┌──────────── Rust core ───────────────────────────────────────┐
+│  library of .cardboard files, per-file undo, debounced       │
+│  atomic saves, one command engine for people and agents      │
+└──────── local socket ── `cardboard mcp` ── your agent ───────┘
 ```
 
-- Every edit, from you or an agent, is a tool call on the same engine, so both share undo and show up live.
-- Gestures (drag, resize, color scrubbing) preview straight in the DOM and commit once on release.
-- Because the whole editor is one web page, popovers and the canvas live in one DOM: clicks on a popover can never reach the design behind it.
+- Every edit, from you or an agent, is a call into the same engine, so both share undo and show up live.
+- Gestures (drag, resize, color scrubbing) preview straight in the page and commit once on release.
+- The desktop app is a thin native window around that web UI, built on [CEF](https://bitbucket.org/chromiumembedded/cef) (the Chromium Embedded Framework) through [cef-rs](https://github.com/tauri-apps/cef-rs).
 
-Details: [architecture](docs/architecture.md), [MCP contract](docs/mcp.md).
+More in [docs/architecture.md](docs/architecture.md).
 
-## Using it
+## Build from source
 
-- Dashboard: Recents, Files, Archive, Settings, search (Ctrl F), grid/list, new file (Ctrl N).
-- Canvas: click selects, click again drills into children, Ctrl click selects the deepest layer, double click edits text. Drag reorders inside auto layout; Ctrl while dragging nests into a sibling; Alt drag duplicates. Space or middle mouse pans, Ctrl scroll zooms, Shift 1 fits.
-- Tools: `V` select, `H` hand, `F` frame, `R` rectangle, `T` text. `Ctrl+/` lists all shortcuts.
-- Inspector: layout (fixed/fit/fill), flex, padding, typography, radius, fill (solid, gradient, image), border, shadows, filters, raw CSS, HTML/JSX export.
+You need Rust (stable), Node 20+, CMake, Ninja and a C/C++ compiler. The first desktop build downloads the Chromium runtime (a few hundred MB) into `~/.cache/cardboard/cef`.
 
-## Agents (MCP)
-
-```json
-{ "mcpServers": { "cardboard": { "command": "/path/to/cardboard", "args": ["mcp"] } } }
+```sh
+git clone https://github.com/goerll/cardboard && cd cardboard
+./scripts/run-desktop.sh                     # builds the UI and desktop app, then runs it
+cargo run --release -- serve --open          # or the editor in your browser
 ```
 
-`cardboard mcp` relays to the running app over `$XDG_RUNTIME_DIR/cardboard.sock`. For standalone editing of one file: `cardboard mcp --document design.cardboard`.
-
-## Development
+The server embeds `ui/dist`, so build the UI before a plain `cargo build`: `npm --prefix ui ci && npm --prefix ui run build`.
 
 ```sh
 cargo test && cargo clippy --all-targets -- -D warnings
 npm --prefix ui run dev       # Vite on :5173, proxies /ws to `cardboard serve --port 4610`
+scripts/package.sh            # release archive for the current OS into dist/
 ```
 
-## Known gaps
+Releases are built by [GitHub Actions](.github/workflows/release.yml) for every `v*` tag. The website in `site/` is the landing page designed in Cardboard itself, exported with [scripts/build-site.py](scripts/build-site.py).
 
-- Undo history lives in memory per session.
-- Each edit sends the full document to the UI. Fine on localhost up to a few thousand layers; diffs would be the next step.
-- No snapping guides, components, or raster export yet.
-- Linux is the tested platform.
+## Status
 
-## Trademarks
+Cardboard is young. Linux is where it's used day to day; the macOS and Windows builds are new, so please [open an issue](https://github.com/goerll/cardboard/issues) if something's off. Known gaps:
+
+- Undo history lives in memory for the session.
+- Each edit sends the whole document to the UI. Fine up to a few thousand layers; diffs are the next step.
+- No snapping guides, components or raster export yet.
+
+## License
+
+[MIT](LICENSE).
 
 Cardboard is an independent project. It is not affiliated with, endorsed by, or sponsored by Paper or any other design tool vendor. All code, text and artwork in this repository are original.
