@@ -63,17 +63,9 @@ jobs:
           name: cardboard-${{ matrix.name }}
           path: dist/cardboard-${{ matrix.name }}.*
           if-no-files-found: error
-
-  publish:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
+      # Each platform attaches itself to the release as soon as it's built.
+      - if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
         with:
-          path: dist
-          merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
+          files: dist/cardboard-${{ matrix.name }}.*
           generate_release_notes: true
