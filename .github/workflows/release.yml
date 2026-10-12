@@ -49,6 +49,9 @@ jobs:
       - uses: seanmiddleditch/gha-setup-ninja@v5
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+      # Git Bash's coreutils `link` would shadow the MSVC linker.
+      - if: runner.os == 'Windows'
+        run: rm -f /usr/bin/link.exe
       - run: npm --prefix ui ci && npm --prefix ui run build
       - run: cargo build --release --locked
       - run: cargo build --release --locked --manifest-path desktop/Cargo.toml
