@@ -112,7 +112,7 @@ npm --prefix ui run dev       # Vite on :5173, proxies /ws to `cardboard serve -
 scripts/package.sh            # release archive for the current OS into dist/
 ```
 
-Releases are built by [GitHub Actions](.github/workflows/release.yml) for every `v*` tag. The website in `site/` is the landing page designed in Cardboard itself, exported with [scripts/build-site.py](scripts/build-site.py).
+Releases are built by [GitHub Actions](.github/workflows/release.yml) for every `v*` tag. The website in `site/` is the landing page designed in Cardboard itself, exported with [scripts/build-site.py](scripts/build-site.py) and deployed by Cloudflare Pages on every push to `main`.
 
 ## Status
 
