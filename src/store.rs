@@ -293,20 +293,12 @@ impl Store {
         if let Some(dir) = std::env::var_os("CARDBOARD_LIBRARY") {
             return dir.into();
         }
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default();
-        home.join("Documents").join("Cardboard")
+        home_dir().join("Documents").join("Cardboard")
     }
     pub fn legacy_workspace() -> PathBuf {
         std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_default()
-                    .join(".local/share")
-            })
+            .unwrap_or_else(|| home_dir().join(".local/share"))
             .join("cardboard/workspace.json")
     }
     /// Convert each file of a v1 workspace into its own `.cardboard`. Returns the count.
@@ -901,4 +893,12 @@ pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
         n += 1;
     }
     path
+}
+
+/// The user's home folder: `HOME` on Linux and macOS, `USERPROFILE` on Windows.
+pub fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default()
 }

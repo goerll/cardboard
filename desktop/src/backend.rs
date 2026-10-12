@@ -15,16 +15,8 @@ impl Backend {
         let hub = Hub::new(store);
         // Bind before opening the window, so a second editor cannot unlink a live socket.
         let socket = cardboard::mcp::default_socket();
-        let listener = cardboard::mcp::bind_socket(&socket).or_else(|e| {
-            // A crashed editor leaves its socket behind; only reclaim it when nobody answers.
-            if socket.exists() && std::os::unix::net::UnixStream::connect(&socket).is_err() {
-                let _ = std::fs::remove_file(&socket);
-                cardboard::mcp::bind_socket(&socket)
-            } else {
-                Err(e)
-            }
-        });
-        let listener = listener
+        // bind_socket reclaims a socket file left behind by a crashed editor.
+        let listener = cardboard::mcp::bind_socket(&socket)
             .map_err(|e| format!("Cannot bind {}: {e}. Is Cardboard already running?", socket.display()))?;
         let url = runtime.block_on(async {
             hub.spawn_autosave();
@@ -44,7 +36,10 @@ impl Backend {
         if let Err(e) = self.hub.flush() {
             eprintln!("{e}");
         }
+        #[cfg(unix)]
         let _ = std::fs::remove_file(&self.socket);
+        #[cfg(windows)]
+        let _ = &self.socket;
         runtime.shutdown_timeout(std::time::Duration::from_secs(1));
     }
 }

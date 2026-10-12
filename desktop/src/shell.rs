@@ -16,10 +16,24 @@ fn same_origin(url: &str) -> bool {
         || url == "about:blank"
 }
 fn open_external(url: &str) {
-    if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
-        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")) {
+        return;
     }
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(windows)]
+    let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
 }
+
+/// The native event type CEF passes to keyboard handlers differs per platform.
+#[cfg(target_os = "linux")]
+type OsEvent<'a> = Option<&'a mut sys::XEvent>;
+#[cfg(windows)]
+type OsEvent<'a> = Option<&'a mut sys::MSG>;
+#[cfg(target_os = "macos")]
+type OsEvent<'a> = *mut u8;
 fn show_devtools(browser: &Browser) {
     if let Some(host) = browser.host() {
         host.show_dev_tools(Some(&WindowInfo::default()), None, None, None);
@@ -31,10 +45,11 @@ wrap_app! { pub struct ShellApp {} impl App {
         // Only the browser process (empty type) decides the display backend.
         if process_type.is_some_and(|t| !t.to_string().is_empty()) { return; }
         let Some(line) = command_line else { return };
+        line.append_switch(Some(&"enable-gpu-rasterization".into()));
+        if !cfg!(target_os = "linux") { return; }
         if line.has_switch(Some(&"ozone-platform".into())) == 0 && line.has_switch(Some(&"ozone-platform-hint".into())) == 0 {
             line.append_switch_with_value(Some(&"ozone-platform-hint".into()), Some(&"auto".into()));
         }
-        line.append_switch(Some(&"enable-gpu-rasterization".into()));
         // Wayland: smooth scroll/pinch and the app id come from these.
         line.append_switch_with_value(Some(&"enable-features".into()), Some(&"WaylandWindowDecorations,OverlayScrollbar".into()));
         line.append_switch_with_value(Some(&"class".into()), Some(&"cardboard".into()));
@@ -71,7 +86,7 @@ wrap_download_handler! { pub struct ShellDownloads {} impl DownloadHandler {
     fn on_before_download(&self, _browser: Option<&mut Browser>, _item: Option<&mut DownloadItem>, suggested_name: Option<&CefString>, callback: Option<&mut BeforeDownloadCallback>) -> i32 {
         let Some(callback) = callback else { return 0 };
         let name = suggested_name.map(|n| n.to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| "cardboard-export.html".into());
-        let dir = std::env::var_os("XDG_DOWNLOAD_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Downloads"));
+        let dir = std::env::var_os("XDG_DOWNLOAD_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| cardboard::store::home_dir().join("Downloads"));
         let _ = std::fs::create_dir_all(&dir);
         // Never overwrite: "name (1).html", "name (2).html", ...
         let path = std::path::Path::new(&name);
@@ -85,7 +100,7 @@ wrap_download_handler! { pub struct ShellDownloads {} impl DownloadHandler {
 } }
 
 wrap_keyboard_handler! { pub struct ShellKeys {} impl KeyboardHandler {
-    fn on_pre_key_event(&self, browser: Option<&mut Browser>, event: Option<&KeyEvent>, _os_event: Option<&mut sys::XEvent>, _is_shortcut: Option<&mut i32>) -> i32 {
+    fn on_pre_key_event(&self, browser: Option<&mut Browser>, event: Option<&KeyEvent>, _os_event: OsEvent<'_>, _is_shortcut: Option<&mut i32>) -> i32 {
         // F12 opens DevTools; every other key goes to the page untouched.
         if let (Some(browser), Some(event)) = (browser, event)
             && event.type_ == KeyEventType::RAWKEYDOWN && event.windows_key_code == 123
@@ -159,13 +174,12 @@ pub fn run(url: &str, devtools: bool) -> Result<(), String> {
     let _ = DEVTOOLS.set(devtools);
     let args = Args::new();
     let mut app = ShellApp::new();
-    let cache = std::env::var_os("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join(".cache"))
-        .join("cardboard/chromium");
+    let cache = cache_dir().join("chromium");
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
     let settings = Settings {
         root_cache_path: cache.to_string_lossy().as_ref().into(),
+        // The Chromium sandbox needs a signed bootstrap on Windows and macOS; Linux keeps it.
+        no_sandbox: (!cfg!(target_os = "linux")).into(),
         ..Default::default()
     };
     if initialize(Some(args.as_main_args()), Some(&settings), Some(&mut app), std::ptr::null_mut()) != 1 {
@@ -184,6 +198,18 @@ pub fn run(url: &str, devtools: bool) -> Result<(), String> {
     run_message_loop();
     shutdown();
     Ok(())
+}
+
+/// Per-user cache folder for Chromium's profile data.
+fn cache_dir() -> std::path::PathBuf {
+    let home = cardboard::store::home_dir();
+    if cfg!(target_os = "macos") {
+        home.join("Library/Caches/Cardboard")
+    } else if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(|| home.join("AppData/Local")).join("Cardboard")
+    } else {
+        std::env::var_os("XDG_CACHE_HOME").map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".cache")).join("cardboard")
+    }
 }
 
 /// "cardboard" as a borrowed CEF string over a leaked, process-lifetime UTF-16 buffer.

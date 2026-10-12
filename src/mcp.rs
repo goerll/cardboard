@@ -54,22 +54,29 @@ impl ServerHandler for CardboardServer {
     }
 }
 
+/// Where the running editor listens for agents: a Unix socket, or a named pipe on Windows.
 #[cfg(unix)]
 pub fn default_socket() -> std::path::PathBuf {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_default()
-                .join(".local/state/cardboard")
-        });
+        .unwrap_or_else(|| crate::store::home_dir().join(".local/state/cardboard"));
     dir.join("cardboard.sock")
 }
+#[cfg(windows)]
+pub fn default_socket() -> std::path::PathBuf {
+    let user = std::env::var("USERNAME").unwrap_or_default();
+    format!(r"\\.\pipe\cardboard-{user}").into()
+}
+
+#[cfg(unix)]
+pub type Listener = std::os::unix::net::UnixListener;
+/// Named pipes are created per connection inside the runtime, so the "listener" is the name.
+#[cfg(windows)]
+pub struct Listener(std::path::PathBuf);
 
 /// Bind before starting the UI, so a second editor cannot accidentally unlink a live socket.
 #[cfg(unix)]
-pub fn bind_socket(path: &std::path::Path) -> std::io::Result<std::os::unix::net::UnixListener> {
+pub fn bind_socket(path: &std::path::Path) -> std::io::Result<Listener> {
     use std::os::unix::fs::PermissionsExt;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -89,25 +96,43 @@ pub fn bind_socket(path: &std::path::Path) -> std::io::Result<std::os::unix::net
     listener.set_nonblocking(true)?;
     Ok(listener)
 }
+#[cfg(windows)]
+pub fn bind_socket(path: &std::path::Path) -> std::io::Result<Listener> {
+    Ok(Listener(path.to_path_buf()))
+}
+
+fn spawn_session<S>(stream: S, store: SharedStore)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
+{
+    let server = CardboardServer { store };
+    tokio::spawn(async move {
+        match server.serve(stream).await {
+            Ok(service) => {
+                let _ = service.waiting().await;
+            }
+            Err(e) => eprintln!("MCP connection ended: {e}"),
+        }
+    });
+}
 
 #[cfg(unix)]
-pub async fn serve_socket(
-    listener: std::os::unix::net::UnixListener,
-    store: SharedStore,
-) -> std::io::Result<()> {
+pub async fn serve_socket(listener: Listener, store: SharedStore) -> std::io::Result<()> {
     let listener = tokio::net::UnixListener::from_std(listener)?;
     loop {
         let (stream, _) = listener.accept().await?;
-        let server = CardboardServer {
-            store: store.clone(),
-        };
-        tokio::spawn(async move {
-            match server.serve(stream).await {
-                Ok(service) => {
-                    let _ = service.waiting().await;
-                }
-                Err(e) => eprintln!("MCP connection ended: {e}"),
-            }
-        });
+        spawn_session(stream, store.clone());
+    }
+}
+#[cfg(windows)]
+pub async fn serve_socket(listener: Listener, store: SharedStore) -> std::io::Result<()> {
+    use tokio::net::windows::named_pipe::ServerOptions;
+    // first_pipe_instance fails if another editor already owns the name.
+    let mut server = ServerOptions::new().first_pipe_instance(true).create(&listener.0)?;
+    loop {
+        server.connect().await?;
+        let connected = server;
+        server = ServerOptions::new().create(&listener.0)?;
+        spawn_session(connected, store.clone());
     }
 }

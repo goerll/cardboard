@@ -9,16 +9,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let option = |name: &str| args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
     let path_option = |name: &str| option(name).map(PathBuf::from);
     if command == "mcp" && option("--document").is_none() {
+        let path = path_option("--socket").unwrap_or_else(cardboard::mcp::default_socket);
+        let fail = |e: std::io::Error| format!("Cannot connect to Cardboard at {}: {e}. Open the desktop app or `cardboard serve`, or use mcp --document PATH for standalone editing.", path.display());
         #[cfg(unix)]
-        {
-            let path = path_option("--socket").unwrap_or_else(cardboard::mcp::default_socket);
-            let mut stream=tokio::net::UnixStream::connect(&path).await.map_err(|e|format!("Cannot connect to Cardboard at {}: {e}. Open the desktop app or `cardboard serve`, or use mcp --document PATH for standalone editing.",path.display()))?;
-            let (mut reader, mut writer) = stream.split();
-            let mut input = tokio::io::stdin();
-            let mut output = tokio::io::stdout();
-            tokio::select! { r=tokio::io::copy(&mut input,&mut writer)=>{r?;}, r=tokio::io::copy(&mut reader,&mut output)=>{r?;} }
-            return Ok(());
-        }
+        let stream = tokio::net::UnixStream::connect(&path).await.map_err(fail)?;
+        #[cfg(windows)]
+        let stream = tokio::net::windows::named_pipe::ClientOptions::new().open(&path).map_err(fail)?;
+        let (mut reader, mut writer) = tokio::io::split(stream);
+        let mut input = tokio::io::stdin();
+        let mut output = tokio::io::stdout();
+        tokio::select! { r=tokio::io::copy(&mut input,&mut writer)=>{r?;}, r=tokio::io::copy(&mut reader,&mut output)=>{r?;} }
+        return Ok(());
     }
     match command {
         "mcp" => {
@@ -38,7 +39,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let hub = Hub::new(Store::library(&library, Some(&Store::legacy_workspace()))?);
             hub.spawn_autosave();
             let server = cardboard::server::run_server(hub.clone(), port).await?;
-            #[cfg(unix)]
             let socket = {
                 let socket = path_option("--socket").unwrap_or_else(cardboard::mcp::default_socket);
                 let listener = cardboard::mcp::bind_socket(&socket)?;
@@ -60,8 +60,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = hub.flush() {
                 eprintln!("{e}");
             }
+            // Unix sockets leave a file behind; on Windows the pipe disappears by itself.
             #[cfg(unix)]
-            let _ = std::fs::remove_file(socket);
+            let _ = std::fs::remove_file(&socket);
+            #[cfg(windows)]
+            let _ = socket;
         }
         "export" => {
             let path = path_option("--document").ok_or("export needs --document PATH")?;
@@ -70,13 +73,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", result["html"].as_str().unwrap());
         }
         _ => println!(
-            "Cardboard 0.2\n\nDesktop: ./scripts/run-desktop.sh\nEditor in a browser: cardboard serve [--library DIR] [--port N] [--open] [--socket PATH]\nAgent relay: cardboard mcp [--socket PATH]\nStandalone: cardboard mcp --document FILE.cardboard\nHTML export: cardboard export --document FILE.cardboard"
+            "Cardboard {}\n\nDesktop app: cardboard-desktop\nEditor in a browser: cardboard serve [--library DIR] [--port N] [--open] [--socket PATH]\nAgent relay: cardboard mcp [--socket PATH]\nStandalone: cardboard mcp --document FILE.cardboard\nHTML export: cardboard export --document FILE.cardboard",
+            env!("CARGO_PKG_VERSION")
         ),
     }
     Ok(())
 }
 
 fn open_browser(url: &str) {
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(windows)]
+    let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    open_browser_linux(url);
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_browser_linux(url: &str) {
     let app = format!("--app={url}");
     let attempts: [(&str, &[&str]); 4] = [
         ("chromium", &[&app]),

@@ -10,6 +10,22 @@ cef = "=154.5.0"
 serde_json = "1.0.149"
 tokio = { version = "1.52", features = ["rt-multi-thread", "net", "io-util", "time"] }
 
+[build-dependencies]
+embed-resource = "3"
+
+[[bin]]
+name = "cardboard-desktop"
+path = "src/main.rs"
+
+[[bin]]
+name = "cardboard_helper"
+path = "src/helper.rs"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.3"
+objc2-app-kit = "0.3"
+objc2-foundation = "0.3"
+
 [package.metadata.cef.bundle]
 helper_name = "cardboard_helper"
 
