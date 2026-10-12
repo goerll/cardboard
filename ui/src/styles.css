@@ -729,16 +729,16 @@ body.scrubbing * {
 .dash-brand {
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: 32px;
+  gap: 10px;
+  height: 44px;
   padding: 0 6px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   margin-bottom: 8px;
 }
 .logo {
-  width: 20px;
-  height: 20px;
+  width: 36px;
+  height: auto;
 }
 .search {
   display: flex;

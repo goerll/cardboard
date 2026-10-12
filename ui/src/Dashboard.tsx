@@ -53,7 +53,7 @@ export function Dashboard() {
     <div className="dashboard">
       <aside className="dash-side">
         <div className="dash-brand">
-          <img className="logo" src="/favicon.svg" alt="" />
+          <img className="logo" src="/logo.svg" alt="" />
           <span>Cardboard</span>
         </div>
         <label className="search">

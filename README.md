@@ -1,5 +1,7 @@
 # Cardboard
 
+<img src="assets/cardboard.svg" width="96" alt="Cardboard icon" />
+
 An open source, local-first HTML/CSS design editor with an MCP interface so agents can edit the same files you do. MIT licensed. No account, no cloud: your designs are `.cardboard` files in a folder.
 
 ## Run it
