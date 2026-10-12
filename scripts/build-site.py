@@ -35,9 +35,18 @@ SECTION_IDS = ["", "editor", "files", "agents", "install"]  # top-level <section
 
 HEAD = """<title>Cardboard: a local-first design editor for you and your agent</title>
 <meta name="description" content="Cardboard is a free, open source design editor where you and your AI agent work on the same canvas. Every layer is real HTML and CSS, and every file stays on your machine.">
-<meta property="og:title" content="Cardboard">
-<meta property="og:description" content="Hand the pencil to your agent. A local-first HTML/CSS design editor with MCP built in.">
-<meta property="og:image" content="https://cardboard.goerll.dev/cardboard-512.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://cardboard.goerll.dev/">
+<meta property="og:site_name" content="Cardboard">
+<meta property="og:title" content="Cardboard: hand the pencil to your agent">
+<meta property="og:description" content="A free, local-first design editor. Real HTML and CSS, with your AI agent on the same canvas.">
+<meta property="og:image" content="https://cardboard.goerll.dev/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Cardboard: hand the pencil to your agent">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://cardboard.goerll.dev/og.png">
+<meta name="theme-color" content="#faf5ec">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
