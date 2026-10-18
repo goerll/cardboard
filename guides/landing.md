@@ -57,12 +57,28 @@ clean the rows are.
 - **One dominant move per section.** The visual should be the largest thing in its section and
   the first thing the eye lands on, with the text supporting it. Don't spread effort over three
   small visuals where one large one would carry.
-- **Light and material.** Keep a consistent light source and use it on the key visuals: a soft
-  radial glow behind the product, a gradient that shifts the ground from one section to the next,
-  a shadow under objects that rest on something, grain or a photograph where the product is
-  physical. Commit to a dominant colour and use the accent sharply and rarely; timid, evenly
-  spread palettes look generated. Vary the ground between sections (light, dark, photo, saturated)
-  so the page has rhythm instead of one long sheet.
+- **Light and material.** Commit to a dominant colour and use the accent sharply and rarely;
+  timid, evenly spread palettes look generated. Vary the ground between sections (light, dark,
+  photo, saturated) so the page has rhythm instead of one long sheet. Keep one light source and
+  spend it on the key visuals. Software pages need this most, because a screenshot on a plain
+  ground is the flattest thing on the web. Techniques that render well here:
+  - *Stage the product.* Set the screenshot on its own lit field instead of the page ground: a
+    band or panel with a soft gradient in the dominant colour, or a large glow behind it (an
+    absolutely placed shape with `filter: blur(80px)` or more, kept inside a clipped parent).
+  - *Embed, don't frame.* Fade a screenshot or a long list into the ground with
+    `mask-image: linear-gradient(to bottom, #000 60%, transparent)`, or let it run off the edge,
+    so it reads as part of a larger surface rather than a card dropped on the page.
+  - *One view in perspective.* Tilt the hero or one feature visual in 3D (`perspective` on the
+    parent, `transform: rotateX(..) rotateY(..)` on the child) with a long soft shadow below it.
+  - *Grain on colour.* Gradients and saturated bands look printed rather than digital with a
+    noise overlay: an absolute `<svg>` holding `<filter><feTurbulence type="fractalNoise"
+    baseFrequency="0.8"/><feColorMatrix type="saturate" values="0"/></filter>` and a full-size
+    `<rect filter="url(#id)">`, at `mix-blend-mode: overlay` and low opacity.
+  - *Draw what isn't UI.* When a claim is about scale, architecture or speed, draw it as crafted
+    illustration in the page's line weight: an isometric line drawing, a field of thousands of
+    dots, a radial or flow diagram. Keep these in one drawing style across the page.
+  - *Photographs lead.* When a strong photograph or object exists for the product, it leads the
+    hero; don't trade it for a smaller drawing. Use `search_images` before deciding there isn't one.
 - **Choose from a few.** For the sections that feel weakest, list two or three different visual
   ideas before drawing one and pick the most specific to this product. The first idea is usually
   the one every page has.
