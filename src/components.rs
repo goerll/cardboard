@@ -8,6 +8,7 @@
 //! After each edit, `reconcile` folds changes made to instance layers (through any ordinary tool)
 //! into overrides, then rebuilds every instance from its main, so main edits reach all instances.
 use crate::document::{Document, Instance, Node, Override, Result};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Inner layers of an instance carry `<instanceId>:<key>` ids; only they contain a colon.
@@ -43,13 +44,15 @@ fn scan(doc: &Document) -> (BTreeSet<String>, Vec<(String, String)>) {
     (mains, instances)
 }
 
-/// The mains as they were before an edit and the instances that already existed.
+/// The mains as they were before an edit, the instances that already existed, and the state
+/// the edit sets explicitly on instance layers.
 pub struct Snapshot {
     mains: BTreeMap<String, Node>,
     instances: BTreeSet<String>,
+    requested: BTreeMap<String, Override>,
 }
 
-pub fn snapshot(doc: &Document) -> Option<Snapshot> {
+pub fn snapshot(doc: &Document, tool: &str, args: &Value) -> Option<Snapshot> {
     let (mains, instances) = scan(doc);
     if mains.is_empty() && instances.is_empty() {
         return None;
@@ -60,12 +63,49 @@ pub fn snapshot(doc: &Document) -> Option<Snapshot> {
             .filter_map(|id| doc.node(&id).ok().map(|n| (id, n.clone())))
             .collect(),
         instances: instances.into_iter().map(|(id, _)| id).collect(),
+        requested: requested(tool, args),
     })
+}
+
+/// Name, text, visibility and lock values an edit gives instance layers by id. Folding alone
+/// can't see them when they equal the main's old value and the same edit changes the main.
+fn requested(tool: &str, args: &Value) -> BTreeMap<String, Override> {
+    let mut out = BTreeMap::<String, Override>::new();
+    let updates = args.get("updates").and_then(Value::as_array);
+    for u in updates.into_iter().flatten() {
+        let Some(id) = u
+            .get("nodeId")
+            .and_then(Value::as_str)
+            .filter(|id| is_inner(id))
+        else {
+            continue;
+        };
+        let text = |k| u.get(k).and_then(Value::as_str).map(String::from);
+        let flag = |k| u.get(k).and_then(Value::as_bool);
+        let o = out.entry(id.into()).or_default();
+        match tool {
+            "set_node_state" => {
+                o.visible = flag("visible").or(o.visible);
+                o.locked = flag("locked").or(o.locked);
+            }
+            "set_text_content" => o.text = text("textContent").or(o.text.take()),
+            "rename_nodes" => o.name = text("name").or(o.name.take()),
+            _ => {}
+        }
+    }
+    out.retain(|_, o| !o.is_empty());
+    out
 }
 
 impl Override {
     fn is_empty(&self) -> bool {
         *self == Override::default()
+    }
+    fn merge(&mut self, o: &Override) {
+        self.name = o.name.clone().or(self.name.take());
+        self.text = o.text.clone().or(self.text.take());
+        self.visible = o.visible.or(self.visible);
+        self.locked = o.locked.or(self.locked);
     }
     fn apply(&self, n: &mut Node) {
         if let Some(v) = &self.name {
@@ -352,6 +392,12 @@ pub fn reconcile(doc: &mut Document, before: Option<&Snapshot>) -> Result<()> {
                     node.name
                 ));
             };
+            let prefix = format!("{id}:");
+            for (layer, o) in &before.requested {
+                if let Some(key) = layer.strip_prefix(&prefix) {
+                    overrides.entry(key.into()).or_default().merge(o);
+                }
+            }
             // A bulk edit (a query, or the same ids listed together) that gave the main and
             // its instances the same new value is a main edit, not an override to pin.
             if let (Some(i), Ok(now)) = (&node.instance, doc.node(of)) {

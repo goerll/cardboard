@@ -36,7 +36,11 @@ calls `components::reconcile`:
    any future bulk-edit tool) create overrides without knowing about components. A bulk edit
    (a `find_nodes`-style `query`, or ids listed together) that gives the main and an instance the
    same new value is a main edit: fields that only repeat the main's new value are dropped from
-   the overrides unless the instance had already overridden them.
+   the overrides unless the instance had already overridden them. The diff alone misses an
+   instance layer set to the main's *old* value by the same edit that changes the main (hide a
+   layer in the main but keep it on one instance), so the name, text, visibility and lock that
+   `rename_nodes`, `set_text_content` and `set_node_state` give an instance layer by id are
+   merged into its overrides too.
 2. Instances whose main no longer exists are detached (they keep their look).
 3. Mains are ordered so nested components update first, then every instance is rebuilt from its
    main plus its overrides. Main edits therefore reach all instances immediately, and overridden
