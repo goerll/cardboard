@@ -25,7 +25,7 @@ Control lines (`{"cardboard":"status"}`, `{"cardboard":"handover"}`) sent as the
 | Read document | `get_selection`, `get_node_info`, `get_children`, `get_tree_summary`, `get_styles`, `find_nodes`, `get_document` |
 | Pages and artboards | `create_page`, `rename_pages`, `create_artboard` |
 | Edit nodes | `write_html`, `update_styles`, `set_text_content`, `rename_nodes`, `delete_nodes`, `duplicate_nodes`, `move_nodes` |
-| Components | `create_component`, `insert_instance`, `detach_instance`, `reset_overrides` (see `docs/components.md`) |
+| Components | `create_component` (`moveToPage` parks the main on e.g. a "Components" page and leaves an instance in place), `insert_instance`, `detach_instance`, `reset_overrides` (see `docs/components.md`) |
 | Tokens and themes | `get_tokens`, `create_tokens`, `set_tokens`, `apply_theme`, `create_kit` |
 | Icons | `search_icons`, `insert_icon` |
 | Images | `import_image`, `search_images` |
@@ -121,8 +121,11 @@ Material Symbols and ~200 more sets), named `set:name`.
 - `search_icons {query, sets?, limit?}` returns `{icons:["lucide:arrow-right", ...], total, source}`.
   Offline it lists matching icons from the local cache (`source: "cache"`) or fails with a clear
   error.
-- `insert_icon {fileId, icon, targetNodeId, mode?, index?, size?, strokeWidth?, color?, name?}`
+- `insert_icon {fileId, icon, targetNodeId | nodeId, mode?, index?, size?, strokeWidth?, color?, name?}`
   places one icon like `write_html` (default `insert-children`) and returns `{nodeId}`.
+  With `nodeId` instead of `targetNodeId` it swaps the icon of an existing icon layer in place
+  (same id; size and color kept unless given). On a layer inside an instance that is an override
+  (see `docs/components.md`), so each copy of a component can carry its own icon.
 - In `write_html`, `<icon name="lucide:arrow-right" size="16" stroke-width="1.5" color="var(--accent)" />`
   does the same inline; `style`, `layer-name`, `hidden` and ordinary attributes apply too.
 

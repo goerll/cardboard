@@ -12,10 +12,12 @@ cases.
   subtree is a *materialized* copy of the main: real nodes that are saved, rendered and exported
   like any other. The instance root keeps its own id; each inner layer gets the id
   `<instanceId>:<mainLayerId>`, e.g. `node-12:node-5`. Ids are stable across main edits, so
-  selections and agent references survive.
+  selections and agent references survive. Since no layer carries `<instanceId>:<mainRootId>`, tools accept it as an
+  alias for the instance root (`node-12:node-4` means `node-12`), and an unknown
+  `<instanceId>:...` id fails with an error that spells out the naming.
 * **Overrides** are keyed by the main layer's id and hold only what the instance changed:
   `name`, `text`, `styles`, `attributes` (an empty string means "removed here"), `visible`,
-  `locked`. The instance root's name, lock, visibility and canvas position are its own.
+  `locked`, and `markup` for an icon layer whose icon was swapped. The instance root's name, lock, visibility and canvas position are its own.
 
 ```json
 { "id": "node-12", "tag": "button", "name": "Cancel button",
@@ -46,6 +48,13 @@ calls `components::reconcile`:
    main plus its overrides. Main edits therefore reach all instances immediately, and overridden
    properties keep the instance's value.
 
+Icons are single layers, so swapping one is an edit, not a structure change:
+`insert_icon {nodeId, icon}` on an instance's icon layer (e.g. `node-12:node-6`) replaces its
+markup, `viewBox` and `data-icon`, keeps its size and color unless the call sets them, and folds
+into a `markup` override plus attribute overrides. A feature-row component can then show a
+different icon in each copy; swapping or restyling the main's icon still reaches copies that
+didn't override it, and `reset_overrides` brings the main's icon back.
+
 Structure belongs to the main: adding, removing, moving or replacing layers inside an instance is
 rejected with an error that points to the alternatives (edit the main, hide the layer with
 `set_node_state`, or `detach_instance`). A component that would contain an instance of itself is
@@ -59,7 +68,7 @@ another agent has claimed, since those changes come from the component rather th
 
 | Tool | Args | Result |
 | --- | --- | --- |
-| `create_component` | `{nodeId, name?}` | `{componentId}` (same as nodeId). Not allowed on instances or their layers |
+| `create_component` | `{nodeId, name?, moveToPage?}` | `{componentId}` (same as nodeId). Not allowed on instances or their layers. With `moveToPage` (page id, or a name like `"Components"`, matched case-insensitively and created if missing) the main moves there as a top-level frame and a new instance takes its place, in one undo step; adds `{pageId, instanceId}` |
 | `insert_instance` | `{componentId, parentId, pageId?, index?, x?, y?}` | `{nodeId, pageId}`. `parentId: "root"` places a top-level frame on `pageId` (default active page) |
 | `detach_instance` | `{nodeIds}` | plain layers with fresh ids that look identical; nested instances stay linked |
 | `reset_overrides` | `{nodeIds}` | clears all overrides of the given instances |

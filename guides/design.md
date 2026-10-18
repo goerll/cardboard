@@ -159,14 +159,18 @@ row of icon cards, and nothing on the page is memorable. Plan against those up f
 - Reuse instead of retyping. Anything that repeats (buttons, list rows, cards, nav items,
   badges) should be a component: build one, call `create_component` on it, then place copies
   with `insert_instance`. Change a copy's text or styles with `set_text_content` and
-  `update_styles` on its layers (ids look like `node-12:node-5`); those changes are overrides
+  `update_styles` on its layers (ids look like `node-12:node-5`; the instance root is just
+  `node-12`, though `node-12:<main id>` works too); those changes are overrides
   and survive later edits to the main. To change every copy at once, edit the main. Layers
   can't be added or removed inside an instance; hide them with `set_node_state` or
   `detach_instance` when one copy really needs a different structure. Use `duplicate_nodes`
-  for one-off variations that shouldn't stay linked.
-- Keep shared components somewhere obvious, like a "Components" page.
-  `duplicate_nodes` and `move_nodes` take a `pageId`, so artboards can be copied or moved
-  between pages.
+  for one-off variations that shouldn't stay linked. Each copy can show its own icon:
+  `insert_icon` with `nodeId` set to the copy's icon layer swaps it as an override.
+- Keep shared components somewhere obvious, like a "Components" page. Build the first copy
+  in place, then `create_component` with `moveToPage: "Components"`: the main moves to that
+  page (created if missing) and an instance takes its place, in one undo step. Give the main a
+  width if it was sized by its old parent. `duplicate_nodes` and `move_nodes` take a `pageId`,
+  so artboards can be copied or moved between pages.
 - Restructure with `move_nodes`. It keeps layer ids stable; deleting and rewriting HTML breaks
   every reference you or the person had.
 - Group related edits with `batch` so they become a single undo step. Reads can go in a batch

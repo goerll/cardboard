@@ -331,6 +331,37 @@ pub(crate) fn normalize_ids(v: &mut Value) {
     }
 }
 
+/// Replace `<instanceId>:<mainRootId>` ids with the instance id (see `components::root_alias`),
+/// in the same id-bearing arguments `normalize_ids` looks at.
+fn resolve_aliases(doc: &Document, v: &mut Value) {
+    fn fix(doc: &Document, v: &mut Value) {
+        match v {
+            Value::String(s) => {
+                if let Some(root) = components::root_alias(doc, s) {
+                    *s = root;
+                }
+            }
+            Value::Array(items) => items.iter_mut().for_each(|v| fix(doc, v)),
+            _ => {}
+        }
+    }
+    match v {
+        Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                match k.as_str() {
+                    "nodeId" | "nodeIds" | "targetNodeId" | "parentId" | "componentId" | "id" => {
+                        fix(doc, v)
+                    }
+                    "styles" | "attributes" | "tokens" | "html" => {}
+                    _ => resolve_aliases(doc, v),
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|v| resolve_aliases(doc, v)),
+        _ => {}
+    }
+}
+
 /// Default output budget for text-heavy reads, sized to fit an agent's tool-result window.
 const MAX_CHARS: usize = 50_000;
 fn max_chars(args: &Value) -> usize {
@@ -609,6 +640,11 @@ pub const MUTATIONS: &[&str] = &[
 pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
     let mut args = args.clone();
     normalize_ids(&mut args);
+    if let Ok(file) = store.file_id(&args)
+        && let Ok(doc) = store.file(&file)
+    {
+        resolve_aliases(doc, &mut args);
+    }
     let args = &args;
     if needs_network(name, args) {
         let ctx = context(store, args);
@@ -1023,6 +1059,109 @@ fn apply(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
     let result = mutate(doc, name, args)?;
     components::reconcile(doc, before.as_ref())?;
     Ok(result)
+}
+
+/// `insert_icon` with `nodeId`: give an existing icon layer another icon, keeping its id, size,
+/// color and other styles unless the call sets them. On an instance layer this is an override.
+fn swap_icon(doc: &mut Document, args: &Value) -> Result<Value> {
+    let id = string(args, "nodeId")?;
+    if args.get("targetNodeId").is_some() {
+        return Err(
+            "Pass nodeId to swap an existing icon or targetNodeId to add one, not both".into(),
+        );
+    }
+    let old = doc.node(id)?;
+    if old.markup.is_none() {
+        return Err(format!(
+            "{id} is not an icon layer; nodeId swaps the icon of an existing icon layer (use targetNodeId to add one)"
+        ));
+    }
+    let old_short = old
+        .attributes
+        .get("data-icon")
+        .and_then(|n| n.split_once(':'))
+        .map(|(_, short)| short.to_owned());
+    let opt = |k: &str| args.get(k).map(css_value).transpose();
+    let (size, stroke_width, color) = (opt("size")?, opt("strokeWidth")?, opt("color")?);
+    let fresh = crate::icons::node(
+        doc,
+        string(args, "icon")?,
+        crate::icons::Options {
+            size: size.as_deref(),
+            stroke_width: stroke_width.as_deref(),
+            color: color.as_deref(),
+        },
+    )?;
+    let node = doc.node_mut(id)?;
+    node.markup = fresh.markup;
+    for k in ["viewBox", "data-icon"] {
+        node.attributes
+            .insert(k.into(), fresh.attributes[k].clone());
+    }
+    let mut keys = vec![];
+    if size.is_some() {
+        keys.extend(["width", "height"]);
+    }
+    if color.is_some() {
+        keys.push("color");
+    }
+    for k in keys {
+        node.styles.insert(k.into(), fresh.styles[k].clone());
+    }
+    // A layer still named after its old icon takes the new icon's name.
+    match args.get("name").and_then(Value::as_str) {
+        Some(name) => node.name = name.into(),
+        None if old_short.as_ref() == Some(&node.name) => node.name = fresh.name,
+        None => {}
+    }
+    Ok(json!({"nodeId":id}))
+}
+
+/// `create_component` with `moveToPage`: the main goes to that page (a page id, or a page name,
+/// created if missing) as a top-level frame, and an instance takes its old place.
+fn move_main(doc: &mut Document, id: &str, page: &str) -> Result<Value> {
+    let wanted = page.trim();
+    let found = doc
+        .pages
+        .iter()
+        .find(|p| p.id == wanted)
+        .or_else(|| {
+            doc.pages
+                .iter()
+                .find(|p| p.name.trim().eq_ignore_ascii_case(wanted))
+        })
+        .map(|p| p.id.clone());
+    let page = match found {
+        Some(p) => p,
+        None if wanted.is_empty() => return Err("moveToPage is empty".into()),
+        None if wanted
+            .strip_prefix("page-")
+            .is_some_and(|n| n.parse::<u64>().is_ok()) =>
+        {
+            return Err(format!(
+                "Page {wanted} does not exist; pass an existing page id, or a name such as \"Components\" to create that page"
+            ));
+        }
+        None => mutate(doc, "create_page", &json!({"name":wanted}))?["pageId"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    };
+    let source_page = page_for(doc, id)?;
+    let parent = parent_id(doc, id);
+    if page == source_page && parent.is_none() {
+        // Already a top-level frame on that page; nothing to move.
+        return Ok(json!({"componentId":id,"pageId":page,"instanceId":null}));
+    }
+    let mut main = doc.node(id)?.clone();
+    let mut instance = components::instantiate(doc, id)?;
+    let instance_id = instance.id.clone();
+    instance.position = main.position;
+    doc.replace(id, vec![instance])?;
+    // Beside the page's other frames, top-aligned with the first one.
+    main.position = place_right(doc, &page, 0.0).or(Some([0.0, 0.0]));
+    doc.page_mut(&page)?.artboards.push(main);
+    Ok(json!({"componentId":id,"pageId":page,"instanceId":instance_id}))
 }
 
 /// Where a top-level copy lands on `page` when no x/y is given: right of the rightmost artboard.
@@ -1680,6 +1819,7 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             }
             Ok(json!({"pageId":page,"nodeIds":ids,"modes":modes}))
         }
+        "insert_icon" if args.get("nodeId").is_some() => swap_icon(doc, args),
         "insert_icon" => {
             // Same placement rules as write_html; the icon becomes one layer.
             let opt = |k: &str| args.get(k).map(css_value).transpose();
@@ -1729,7 +1869,13 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             if let Some(name) = args.get("name").and_then(Value::as_str) {
                 node.name = name.into();
             }
-            Ok(json!({"componentId":id}))
+            match args.get("moveToPage") {
+                None => Ok(json!({"componentId":id})),
+                Some(page) => {
+                    let page = page.as_str().ok_or("moveToPage must be a string")?;
+                    move_main(doc, id, page)
+                }
+            }
         }
         "insert_instance" => {
             let component = string(args, "componentId")?;
@@ -2140,8 +2286,8 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "create_component",
-        "Turn an existing layer into a main component. Then place copies with insert_instance: edits to the main reach every instance, and each instance keeps its own text, style and attribute overrides.",
-        json!({"nodeId":s,"name":s}),
+        "Turn an existing layer into a main component. Then place copies with insert_instance: edits to the main reach every instance, and each instance keeps its own text, style and attribute overrides. With moveToPage (a page id, or a page name such as \"Components\", created if missing) the main moves to that page as a top-level frame and an instance takes its place, in one undo step; the result adds pageId and instanceId. Give the main a width if it relied on its old parent for one.",
+        json!({"nodeId":s,"name":s,"moveToPage":{"type":"string","description":"Page id or name to keep the main on; an instance stays where the layer was"}}),
         vec!["nodeId", "fileId"],
         false,
     );
@@ -2207,9 +2353,9 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "insert_icon",
-        "Insert an icon from a real icon set as ONE layer (placement like write_html, default mode insert-children). size is px or a CSS length (default 24); strokeWidth works for outline sets (lucide, tabler); color defaults to currentColor so the icon follows the text color. Recolor later with update_styles color, resize with width/height. Inside write_html you can also write <icon name=\"lucide:check\" size=\"16\" stroke-width=\"1.5\" color=\"var(--accent)\" style=\"...\" />.",
-        json!({"icon":s,"targetNodeId":s,"mode":{"type":"string","enum":["insert-children","insert-before","insert-after","replace"]},"index":{"type":"integer","minimum":0},"size":{"type":["number","string"]},"strokeWidth":{"type":["number","string"]},"color":s,"name":s}),
-        vec!["icon", "targetNodeId", "fileId"],
+        "Insert an icon from a real icon set as ONE layer (placement like write_html, default mode insert-children). size is px or a CSS length (default 24); strokeWidth works for outline sets (lucide, tabler); color defaults to currentColor so the icon follows the text color. Recolor later with update_styles color, resize with width/height. Inside write_html you can also write <icon name=\"lucide:check\" size=\"16\" stroke-width=\"1.5\" color=\"var(--accent)\" style=\"...\" />. To swap the icon of an existing icon layer instead, pass nodeId (not targetNodeId): the layer keeps its id, size and color unless you set them, and on a layer inside an instance (<instanceId>:<mainLayerId>) the new icon is an override that survives edits to the main, e.g. a different icon per feature row.",
+        json!({"icon":s,"targetNodeId":s,"nodeId":{"type":"string","description":"Existing icon layer to give this icon, instead of inserting a new layer"},"mode":{"type":"string","enum":["insert-children","insert-before","insert-after","replace"]},"index":{"type":"integer","minimum":0},"size":{"type":["number","string"]},"strokeWidth":{"type":["number","string"]},"color":s,"name":s}),
+        vec!["icon", "fileId"],
         false,
     );
     add(

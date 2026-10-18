@@ -539,3 +539,109 @@ fn icon_layers_inside_components_follow_the_main() {
     let html = html::nodes_html(doc(&s), vec![node(&s, &a)], false);
     assert!(html.contains("<circle"), "{html}");
 }
+
+#[test]
+fn instance_root_answers_to_its_layer_style_id() {
+    let mut s = Store::memory();
+    let (frame, main, label) = button(&mut s);
+    let a = instance(&mut s, &main, &frame);
+    // Inner layers are a:<layer>, so agents guess a:<main> for the root; it means the root.
+    let alias = format!("{a}:{main}");
+    edit(
+        &mut s,
+        "batch",
+        json!({"operations":[
+            {"tool":"update_styles","args":{"updates":[{"nodeIds":[alias],"styles":{"background":"#eee"}}]}},
+            {"tool":"set_text_content","args":{"updates":[{"nodeId":format!("{a}:{label}"),"textContent":"Cancel"}]}},
+            {"tool":"rename_nodes","args":{"updates":[{"nodeId":alias,"name":"Cancel button"}]}}
+        ]}),
+    );
+    assert_eq!(node(&s, &a).styles["background"], "#eee");
+    assert_eq!(node(&s, &a).name, "Cancel button");
+    let info = edit(&mut s, "get_node_info", json!({"nodeId":alias}));
+    assert_eq!(info["id"], json!(a));
+    // A wrong inner id says how instance layers are named.
+    let err = tools::call(
+        &mut s,
+        "update_styles",
+        &json!({"updates":[{"nodeIds":[format!("{a}:node-999")],"styles":{"color":"red"}}]}),
+    )
+    .unwrap_err();
+    assert!(err.contains(&format!("its root is {a}")), "{err}");
+}
+
+#[test]
+fn create_component_can_park_the_main_on_a_components_page() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s, "Landing");
+    let ids = insert(
+        &mut s,
+        &frame,
+        "<h1>Title</h1><div layer-name=\"Feature\" style=\"display:flex\"><span>Fast</span></div><p>Footer</p>",
+    );
+    let (row, label) = (ids[1].clone(), node(&s, &ids[1]).children[0].id.clone());
+    let pages = doc(&s).pages.len();
+    let made = edit(
+        &mut s,
+        "create_component",
+        json!({"nodeId":row,"moveToPage":"Components"}),
+    );
+    let instance = made["instanceId"].as_str().unwrap().to_string();
+    let page = made["pageId"].as_str().unwrap().to_string();
+    assert_eq!(made["componentId"], json!(row));
+    let d = doc(&s);
+    assert_eq!(d.pages.len(), pages + 1);
+    let components = d.pages.iter().find(|p| p.id == page).unwrap();
+    assert_eq!(components.name, "Components");
+    assert_eq!(components.artboards[0].id, row);
+    assert!(components.artboards[0].component && components.artboards[0].position.is_some());
+    // The instance sits exactly where the layer was and still follows the main.
+    let kids: Vec<_> = node(&s, &frame)
+        .children
+        .iter()
+        .map(|c| c.id.clone())
+        .collect();
+    assert_eq!(kids, [ids[0].clone(), instance.clone(), ids[2].clone()]);
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":label,"textContent":"Faster"}]}),
+    );
+    assert_eq!(node(&s, &format!("{instance}:{label}")).text, "Faster");
+
+    // A second component lands on the same page by name, beside the first.
+    let other = insert(&mut s, &frame, "<div layer-name=\"Badge\">New</div>")[0].clone();
+    let second = edit(
+        &mut s,
+        "create_component",
+        json!({"nodeId":other,"moveToPage":"components"}),
+    );
+    assert_eq!(second["pageId"], json!(page));
+    let d = doc(&s);
+    let components = d.pages.iter().find(|p| p.id == page).unwrap();
+    assert_eq!(components.artboards.len(), 2);
+    assert!(
+        components.artboards[1].position.unwrap()[0] > components.artboards[0].position.unwrap()[0]
+    );
+
+    // Each create_component is one undo step: undo the badge, its insert and the text edit, then
+    // one more undo puts the row back in place, unlinked, and drops the new page.
+    for _ in 0..3 {
+        edit(&mut s, "undo", json!({}));
+    }
+    assert!(doc(&s).pages.iter().any(|p| p.id == page));
+    edit(&mut s, "undo", json!({}));
+    let d = doc(&s);
+    assert_eq!(d.pages.len(), pages);
+    assert_eq!(node(&s, &frame).children[1].id, row);
+    assert!(!node(&s, &row).component && d.node(&instance).is_err());
+
+    let err = tools::call(
+        &mut s,
+        "create_component",
+        &json!({"nodeId":row,"moveToPage":"page-999"}),
+    )
+    .unwrap_err();
+    assert!(err.contains("does not exist"), "{err}");
+    assert!(!node(&s, &row).component);
+}
