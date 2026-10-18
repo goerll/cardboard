@@ -168,3 +168,28 @@ fn an_agent_only_undoes_its_own_edits() {
     ok(&mut s, &None, "undo", json!({}));
     ok(&mut s, &None, "undo", json!({}));
 }
+
+#[test]
+fn query_targeted_edits_respect_and_take_claims() {
+    let mut s = Store::memory();
+    let (a, b) = (agent("a"), agent("b"));
+    let frame = artboard(&mut s, &a);
+    let insert = json!({"targetNodeId":frame,"mode":"insert-children","html":"<p style=\"color:blue\">x</p>"});
+    let p = ok(&mut s, &a, "write_html", insert)["nodeIds"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // A query reaching A's layer is refused, alone or inside a batch.
+    let by_color = json!({"styles":{"color":"blue"}});
+    let restyle = json!({"updates":[{"query":by_color,"styles":{"color":"red"}}]});
+    let error = run(&mut s, &b, "update_styles", restyle.clone()).unwrap_err();
+    assert!(error.contains("agent a"), "{error}");
+    let batch = json!({"operations":[{"tool":"set_attributes","args":{"updates":[{"query":by_color,"attributes":{"title":"t"}}]}}]});
+    assert!(run(&mut s, &b, "batch", batch).is_err());
+    assert!(run(&mut s, &b, "delete_nodes", json!({"query":by_color})).is_err());
+    // Once released, B's query edit claims what it matched, even though it no longer matches.
+    ok(&mut s, &a, "finish_working_on_nodes", json!({}));
+    ok(&mut s, &b, "update_styles", restyle);
+    let error = run(&mut s, &a, "update_styles", color(&p)).unwrap_err();
+    assert!(error.contains("agent b"), "{error}");
+}

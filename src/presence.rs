@@ -151,13 +151,18 @@ fn targets(doc: &Document, name: &str, args: &Value) -> Vec<(String, Reach)> {
             };
             out.extend(id(args, "targetNodeId").map(|t| (t, reach)));
         }
-        "update_styles" => {
+        "update_styles" | "set_attributes" => {
             for u in updates(args) {
                 out.extend(ids(u, "nodeIds").into_iter().map(|i| (i, Node)));
+                out.extend(id(u, "nodeId").map(|i| (i, Node)));
+                out.extend(
+                    crate::tools::query_ids(doc, u)
+                        .into_iter()
+                        .map(|i| (i, Node)),
+                );
             }
         }
-        "set_text_content" | "rename_nodes" | "set_attributes" | "set_node_state"
-        | "set_positions" => {
+        "set_text_content" | "rename_nodes" | "set_node_state" | "set_positions" => {
             out.extend(
                 updates(args)
                     .filter_map(|u| id(u, "nodeId"))
@@ -166,6 +171,11 @@ fn targets(doc: &Document, name: &str, args: &Value) -> Vec<(String, Reach)> {
         }
         "delete_nodes" | "start_working_on_nodes" => {
             out.extend(ids(args, "nodeIds").into_iter().map(|i| (i, Subtree)));
+            out.extend(
+                crate::tools::query_ids(doc, args)
+                    .into_iter()
+                    .map(|i| (i, Subtree)),
+            );
         }
         "duplicate_nodes" => {
             for spec in args
@@ -255,17 +265,38 @@ fn touched(doc: &Document, name: &str, args: &Value, result: &Value) -> Vec<Stri
     out
 }
 
-/// Refuse an agent's edit that would trample another agent's claim.
+/// Refuse an agent's edit that would trample another agent's claim. Returns the nodes that the
+/// call's `query` items matched before the edit, since an edit can change what a query matches.
 pub fn check(
     doc: &Document,
     claims: &Claims,
     actor: &Actor,
     name: &str,
     args: &Value,
-) -> Result<()> {
-    match claims.conflict(doc, actor, &targets(doc, name, args)) {
-        Some(message) => Err(message),
-        None => Ok(()),
+) -> Result<Vec<String>> {
+    if let Some(message) = claims.conflict(doc, actor, &targets(doc, name, args)) {
+        return Err(message);
+    }
+    Ok(queried(doc, name, args))
+}
+
+/// Nodes matched by the `query` items of a style or attribute edit (including inside `batch`).
+fn queried(doc: &Document, name: &str, args: &Value) -> Vec<String> {
+    match name {
+        "update_styles" | "set_attributes" => updates(args)
+            .flat_map(|u| crate::tools::query_ids(doc, u))
+            .collect(),
+        "batch" => args
+            .get("operations")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|op| {
+                let tool = op.get("tool").and_then(Value::as_str).unwrap_or_default();
+                queried(doc, tool, op.get("args").unwrap_or(&Value::Null))
+            })
+            .collect(),
+        _ => vec![],
     }
 }
 
@@ -277,9 +308,11 @@ pub fn record(
     name: &str,
     args: &Value,
     result: &Value,
+    queried: Vec<String>,
 ) {
     let ids = touched(doc, name, args, result)
         .into_iter()
+        .chain(queried)
         .filter(|id| doc.node(id).is_ok());
     claims.claim(actor, ids);
 }

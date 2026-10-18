@@ -449,6 +449,19 @@ impl Query {
         Ok(out)
     }
 }
+/// What an edit item's `query` matches, or nothing without one (or with an invalid one, which the
+/// edit itself reports).
+pub(crate) fn query_ids(doc: &Document, item: &Value) -> Vec<String> {
+    let Some(query) = item.get("query").and_then(|q| Query::parse(q).ok()) else {
+        return vec![];
+    };
+    if !query.has_filter() && query.node.is_none() {
+        return vec![];
+    }
+    query.run(doc).map_or(vec![], |hits| {
+        hits.iter().map(|h| h.node.id.clone()).collect()
+    })
+}
 /// The ids an edit item targets: its explicit `key` ids, or everything its `query` matches.
 fn targets(doc: &Document, item: &Value, key: &str) -> Result<Vec<String>> {
     match item.get("query") {
@@ -612,9 +625,10 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
     let claims_apply = actor.is_some()
         && (name == "batch" || name == "start_working_on_nodes" || MUTATIONS.contains(&name))
         && !matches!(name, "select_nodes" | "set_active_page");
+    let mut queried = vec![];
     if let Some(actor) = actor.as_ref().filter(|_| claims_apply) {
         let file = store.open(&id)?;
-        presence::check(&file.doc, &file.claims, actor, name, args)?;
+        queried = presence::check(&file.doc, &file.claims, actor, name, args)?;
     }
     let mut result = match name {
         "start_working_on_nodes" => {
@@ -675,7 +689,15 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
     };
     if let Some(actor) = actor.as_ref().filter(|_| claims_apply) {
         let file = store.files.get_mut(&id).ok_or("File is not open")?;
-        presence::record(&file.doc, &mut file.claims, actor, name, args, &result);
+        presence::record(
+            &file.doc,
+            &mut file.claims,
+            actor,
+            name,
+            args,
+            &result,
+            queried,
+        );
         store.presence_changed(&id);
     }
     result["fileId"] = json!(id);
