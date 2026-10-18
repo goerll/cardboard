@@ -1,8 +1,11 @@
+pub mod doctor;
 pub mod document;
 pub mod html;
 pub mod hub;
 pub mod import;
 pub mod mcp;
+pub mod presence;
+pub mod relay;
 pub mod render;
 pub mod server;
 pub mod store;

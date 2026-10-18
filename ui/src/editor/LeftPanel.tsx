@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Bot,
   ChevronDown,
   ChevronRight,
   Columns2,
@@ -23,7 +24,7 @@ import {
 } from 'lucide-react';
 import type { CardboardDocument, DesignNode } from '../types';
 import { activePage, ancestors, displayName, indexPage, layerKind, type LayerKind } from '../lib/tree';
-import { call } from '../api';
+import { call, useServer } from '../api';
 import { edit, engineRef, select, setEditor, useEditor } from './store';
 import { IconButton, Popover, Segmented, TextField } from '../ui/controls';
 import { ColorRow } from '../ui/ColorPicker';
@@ -183,6 +184,18 @@ function Layers({ doc }: { doc: CardboardDocument }) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const selection = doc.selection;
+  const claims = useServer((s) => s.docs[doc.id]?.agents);
+  // Claimed layers show the agent's name; their ancestors show that work is happening inside.
+  const agents = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const [id, name] of Object.entries(claims ?? {})) {
+      if (!index.nodes.has(id)) continue;
+      out.set(id, name);
+      for (const a of ancestors(index, id)) if (!out.has(a)) out.set(a, '');
+    }
+    return out;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claims, page]);
   // Reveal selected layers.
   useEffect(() => {
     const add: Record<string, boolean> = {};
@@ -270,6 +283,7 @@ function Layers({ doc }: { doc: CardboardDocument }) {
           node={node}
           depth={depth}
           artboard={depth === 0}
+          agent={agents.get(node.id)}
           selected={selection.includes(node.id)}
           parentSelected={!selection.includes(node.id) && ancestors(index, node.id).some((a) => selection.includes(a))}
           open={!!open[node.id]}
@@ -309,6 +323,8 @@ const LayerRow = memo(function LayerRow(props: {
   node: DesignNode;
   depth: number;
   artboard: boolean;
+  /** Agent editing this layer; '' when an agent is editing something inside it. */
+  agent?: string;
   selected: boolean;
   parentSelected: boolean;
   open: boolean;
@@ -358,6 +374,15 @@ const LayerRow = memo(function LayerRow(props: {
         />
       ) : (
         <span className="row-name">{label}</span>
+      )}
+      {props.agent !== undefined && (
+        <span
+          className={`agent-badge ${props.agent ? '' : 'inside'}`}
+          title={props.agent ? `${props.agent} is editing this layer` : 'An agent is editing a layer inside this one'}
+        >
+          <Bot size={11} />
+          {props.agent && <span className="agent-name">{props.agent}</span>}
+        </span>
       )}
       <span className={`row-actions ${node.locked || !node.visible ? 'pinned' : ''}`}>
         <button

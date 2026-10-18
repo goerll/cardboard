@@ -1,10 +1,10 @@
 use crate::{
     document::{Document, Node, Result, Store, Styles},
-    html,
+    html, presence,
 };
 use serde_json::{Value, json};
 
-pub const INSTRUCTIONS: &str = "Cardboard is a local HTML/CSS design editor; the person sees your edits live and shares your undo history. Before anything else, read get_guide with topic cardboard-design. Start with get_basic_info and get_selection, and pass fileId and pageId explicitly. Post a short design plan before starting something new, add one visual group per write_html call, reuse layers with duplicate_nodes and move_nodes, and use the file's tokens. Most tools report authored CSS; use screenshot to see your work and get_bounds to measure it after each visual group, and only claim visual checks you actually looked at. Call finish_working_on_nodes when done.";
+pub const INSTRUCTIONS: &str = "Cardboard is a local HTML/CSS design editor; the person sees your edits live and shares your undo history (undo only reverts your own latest edit). Before anything else, read get_guide with topic cardboard-design. Start with get_basic_info and get_selection, and pass fileId and pageId explicitly. Post a short design plan before starting something new, add one visual group per write_html call, reuse layers with duplicate_nodes and move_nodes, and use the file's tokens. Most tools report authored CSS; use screenshot to see your work and get_bounds to measure it after each visual group, and only claim visual checks you actually looked at. Edited layers are marked as yours and other agents can't change them; call finish_working_on_nodes when done.";
 pub const GUIDE: &str = include_str!("../guides/design.md");
 
 pub fn string<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
@@ -481,11 +481,10 @@ const READS: &[&str] = &[
     "get_jsx",
     "export_html",
     "find_nodes",
-    "finish_working_on_nodes",
 ];
 
 /// Tools that change one document and therefore can run inside `batch`.
-const MUTATIONS: &[&str] = &[
+pub const MUTATIONS: &[&str] = &[
     "create_page",
     "rename_pages",
     "update_pages",
@@ -609,7 +608,35 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
         value["revision"] = json!(doc.revision);
         return Ok(value);
     }
+    let actor = store.actor.clone();
+    let claims_apply = actor.is_some()
+        && (name == "batch" || name == "start_working_on_nodes" || MUTATIONS.contains(&name))
+        && !matches!(name, "select_nodes" | "set_active_page");
+    if let Some(actor) = actor.as_ref().filter(|_| claims_apply) {
+        let file = store.open(&id)?;
+        presence::check(&file.doc, &file.claims, actor, name, args)?;
+    }
     let mut result = match name {
+        "start_working_on_nodes" => {
+            let ids = string_ids(args, "nodeIds")?;
+            for node in &ids {
+                store.file(&id)?.node(node)?;
+            }
+            json!({"claimed":ids,"expiresInSeconds":presence::CLAIM_TTL.as_secs()})
+        }
+        "finish_working_on_nodes" => {
+            let ids = args
+                .get("nodeIds")
+                .map(|_| string_ids(args, "nodeIds"))
+                .transpose()?;
+            if let Some(actor) = &actor {
+                let file = store.files.get_mut(&id).ok_or("File is not open")?;
+                if file.claims.release(&file.doc, actor, ids.as_deref()) {
+                    store.presence_changed(&id);
+                }
+            }
+            json!({"finished":true})
+        }
         "undo" | "redo" => {
             if name == "undo" {
                 store.undo(&id)?
@@ -646,6 +673,11 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
         _ if MUTATIONS.contains(&name) => store.transaction(&id, |doc| mutate(doc, name, args))?,
         _ => return Err(format!("Unknown tool: {name}")),
     };
+    if let Some(actor) = actor.as_ref().filter(|_| claims_apply) {
+        let file = store.files.get_mut(&id).ok_or("File is not open")?;
+        presence::record(&file.doc, &mut file.claims, actor, name, args, &result);
+        store.presence_changed(&id);
+    }
     result["fileId"] = json!(id);
     result["revision"] = json!(store.file(&id)?.revision);
     Ok(result)
@@ -800,7 +832,6 @@ fn read(doc: &Document, name: &str, args: &Value) -> Result<Option<Value>> {
                 .collect::<Vec<_>>();
             json!({"nodes":nodes,"total":hits.len(),"truncated":hits.len() > limit})
         }
-        "finish_working_on_nodes" => json!({"finished":true}),
         _ => return Ok(None),
     }))
 }
@@ -1310,7 +1341,7 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "get_basic_info",
-        "Inspect pages, artboards, dimensions and tokens before editing.",
+        "Inspect pages, artboards, dimensions and tokens before editing. Also reports `connection` (app, serve or headless, with an editor URL to share) and `agents` (layers other agents are working on).",
         json!({}),
         vec![],
         true,
@@ -1456,15 +1487,22 @@ pub fn definitions() -> Vec<Value> {
         true,
     );
     add(
+        "start_working_on_nodes",
+        "Claim layers before a multi-step change. The editor marks them as being edited by you, and other agents get an error if they edit them, their ancestors' structure or anything inside them. Editing a layer claims it too. Claims last 2 minutes after your last edit in the file.",
+        json!({"nodeIds":ids}),
+        vec!["fileId", "nodeIds"],
+        false,
+    );
+    add(
         "finish_working_on_nodes",
-        "Finish an editing session. This first version has no presence markers to release.",
+        "Release your claims on these layers (and layers inside them), or on all your layers in the file when nodeIds is omitted. Call it when you're done.",
         json!({"nodeIds":ids}),
         vec!["fileId"],
-        true,
+        false,
     );
     add(
         "undo",
-        "Undo the most recent edit of a file; revisions stay monotonic.",
+        "Undo your most recent edit of a file; revisions stay monotonic. Fails if the latest edit was made by the person or another agent.",
         json!({}),
         vec![],
         false,

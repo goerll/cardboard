@@ -1,12 +1,43 @@
-use crate::{hub::Hub, tools};
+use crate::{hub::Hub, presence::Actor, tools};
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt, model::*, service::RequestContext};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
 pub type SharedStore = Arc<Hub>;
+/// Clients name their session here in `initialize` capabilities, so claims and undo authorship
+/// survive the relay reconnecting.
+pub const SESSION_CAPABILITY: &str = "cardboard/session";
+
 #[derive(Clone)]
 pub struct CardboardServer {
     pub store: SharedStore,
+    /// Fallback session id for clients that don't name one.
+    pub session: String,
+}
+
+impl CardboardServer {
+    pub fn new(store: SharedStore) -> Self {
+        Self {
+            store,
+            session: format!("s-{}", crate::store::random_hex(6)),
+        }
+    }
+    fn actor(&self, context: &RequestContext<RoleServer>) -> Actor {
+        let info = context.peer.peer_info();
+        let id = info
+            .as_ref()
+            .and_then(|i| {
+                i.capabilities
+                    .experimental
+                    .as_ref()?
+                    .get(SESSION_CAPABILITY)
+            })
+            .and_then(|c| c.get("id")?.as_str().map(String::from))
+            .unwrap_or_else(|| self.session.clone());
+        let name = info.map_or("agent".into(), |i| i.client_info.name.clone());
+        Actor { id, name }
+    }
 }
 
 impl ServerHandler for CardboardServer {
@@ -44,14 +75,16 @@ impl ServerHandler for CardboardServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> std::result::Result<CallToolResponse, ErrorData> {
         let args = Value::Object(request.arguments.unwrap_or_default());
+        let actor = self.actor(&context);
         let store = self.store.clone();
         let name = request.name.clone();
-        let outcome = tokio::task::spawn_blocking(move || store.call(&name, &args))
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        let outcome =
+            tokio::task::spawn_blocking(move || store.call_as(Some(&actor), &name, &args))
+                .await
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         let result = match outcome {
             Ok(mut value) => {
                 // Images go out as real image content so the agent sees them, not as base64 text.
@@ -93,9 +126,39 @@ pub type Listener = std::os::unix::net::UnixListener;
 #[cfg(windows)]
 pub struct Listener(std::path::PathBuf);
 
-/// Bind before starting the UI, so a second editor cannot accidentally unlink a live socket.
-#[cfg(unix)]
+/// Bind before opening the library, so a second editor cannot unlink a live socket or read files
+/// another process is still writing. A headless agent session holding the socket hands it over.
 pub fn bind_socket(path: &std::path::Path) -> std::io::Result<Listener> {
+    for _ in 0..20 {
+        match bind_exclusive(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                let reply = control(path, &json!({"cardboard":"handover"})).map_err(|_| e)?;
+                if reply["ok"] != true {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AddrInUse,
+                        reply["error"]
+                            .as_str()
+                            .unwrap_or("Cardboard is already running")
+                            .to_string(),
+                    ));
+                }
+                // The headless host saved and stopped; its socket file is ours to replace.
+                #[cfg(unix)]
+                let _ = std::fs::remove_file(path);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            other => return other,
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AddrInUse,
+        "Agent sessions keep re-hosting the library; close them and retry",
+    ))
+}
+
+/// Bind only if nobody is serving, reclaiming a socket left behind by a crash.
+#[cfg(unix)]
+pub fn bind_exclusive(path: &std::path::Path) -> std::io::Result<Listener> {
     use std::os::unix::fs::PermissionsExt;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -115,32 +178,114 @@ pub fn bind_socket(path: &std::path::Path) -> std::io::Result<Listener> {
     listener.set_nonblocking(true)?;
     Ok(listener)
 }
+/// Named pipes refuse a second first instance; that check happens in `serve_socket`.
 #[cfg(windows)]
-pub fn bind_socket(path: &std::path::Path) -> std::io::Result<Listener> {
-    Ok(Listener(path.to_path_buf()))
+pub fn bind_exclusive(path: &std::path::Path) -> std::io::Result<Listener> {
+    // Opening the pipe as a client tells us whether someone is already serving this name.
+    let probe = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path);
+    match probe {
+        Ok(_) => Err(std::io::ErrorKind::AddrInUse.into()),
+        Err(_) => Ok(Listener(path.to_path_buf())),
+    }
 }
 
-fn spawn_session<S>(stream: S, store: SharedStore)
+/// Send one control line to whoever owns the socket and read its one-line JSON reply.
+/// Control lines are not JSON-RPC (no `jsonrpc` field), so they never collide with MCP.
+pub fn control(path: &std::path::Path, message: &Value) -> std::io::Result<Value> {
+    use std::io::{BufRead, Write};
+    #[cfg(unix)]
+    let stream = {
+        let s = std::os::unix::net::UnixStream::connect(path)?;
+        s.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+        s
+    };
+    #[cfg(windows)]
+    let stream = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let mut writer = &stream;
+    writer.write_all(format!("{message}\n").as_bytes())?;
+    let mut line = String::new();
+    std::io::BufReader::new(&stream).read_line(&mut line)?;
+    serde_json::from_str(&line).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the owner does not understand control messages (an older Cardboard?)",
+        )
+    })
+}
+
+/// What `{"cardboard":"status"}` reports about this process.
+pub fn status(hub: &Hub) -> Value {
+    let mut status = hub.host();
+    status["pid"] = json!(std::process::id());
+    status["version"] = json!(env!("CARGO_PKG_VERSION"));
+    status["library"] = json!(hub.lock().library);
+    status
+}
+
+/// Answer control lines, then hand the rest of the stream to an MCP session.
+async fn spawn_session<S>(stream: S, store: SharedStore)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
 {
-    let server = CardboardServer { store };
-    tokio::spawn(async move {
-        match server.serve(stream).await {
-            Ok(service) => {
-                let _ = service.waiting().await;
+    let (read, mut write) = tokio::io::split(stream);
+    let mut reader = tokio::io::BufReader::new(read);
+    let mut line = String::new();
+    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+        return;
+    }
+    let message: Value = serde_json::from_str(&line).unwrap_or_default();
+    if let Some(command) = message.get("cardboard").and_then(Value::as_str) {
+        let reply = match command {
+            "status" => status(&store),
+            "handover" if store.host()["mode"] == "headless" => match store.retire() {
+                Ok(()) => json!({"ok":true}),
+                Err(e) => {
+                    json!({"ok":false,"error":format!("Could not save before handing over: {e}")})
+                }
+            },
+            "handover" => {
+                json!({"ok":false,"error":"Cardboard is already running; close it first"})
             }
-            Err(e) => eprintln!("MCP connection ended: {e}"),
+            _ => json!({"ok":false,"error":"Unknown control message"}),
+        };
+        let _ = write.write_all(format!("{reply}\n").as_bytes()).await;
+        return;
+    }
+    let stream = tokio::io::join(std::io::Cursor::new(line).chain(reader), write);
+    let server = CardboardServer::new(store.clone());
+    let mut retired = store.retired();
+    match server.serve(stream).await {
+        Ok(service) => {
+            let token = service.cancellation_token();
+            tokio::select! {
+                _ = service.waiting() => {}
+                // Drop agents off a retired host so their relays reconnect to the new owner.
+                _ = retired.wait_for(|r| *r) => token.cancel(),
+            }
         }
-    });
+        Err(e) => eprintln!("MCP connection ended: {e}"),
+    }
 }
 
+/// Serve agents until the hub is retired (handed over to the app).
 #[cfg(unix)]
 pub async fn serve_socket(listener: Listener, store: SharedStore) -> std::io::Result<()> {
     let listener = tokio::net::UnixListener::from_std(listener)?;
+    let mut retired = store.retired();
     loop {
-        let (stream, _) = listener.accept().await?;
-        spawn_session(stream, store.clone());
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (stream, _) = accepted?;
+                tokio::spawn(spawn_session(stream, store.clone()));
+            }
+            _ = retired.wait_for(|r| *r) => return Ok(()),
+        }
     }
 }
 #[cfg(windows)]
@@ -150,10 +295,14 @@ pub async fn serve_socket(listener: Listener, store: SharedStore) -> std::io::Re
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
         .create(&listener.0)?;
+    let mut retired = store.retired();
     loop {
-        server.connect().await?;
+        tokio::select! {
+            connected = server.connect() => connected?,
+            _ = retired.wait_for(|r| *r) => return Ok(()),
+        }
         let connected = server;
         server = ServerOptions::new().create(&listener.0)?;
-        spawn_session(connected, store.clone());
+        tokio::spawn(spawn_session(connected, store.clone()));
     }
 }

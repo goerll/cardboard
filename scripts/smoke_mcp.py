@@ -6,20 +6,22 @@ import selectors
 import subprocess
 import sys
 import tempfile
+import time
 
 
 class Client:
-    def __init__(self, binary, document=None):
+    def __init__(self, binary, document=None, extra=(), name="cardboard-smoke"):
         self.process = subprocess.Popen(
-            [str(binary), "mcp"] + (["--document", str(document)] if document is not None else []),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+            [str(binary), "mcp"] + (["--document", str(document)] if document is not None else [])
+            + list(extra),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
         )
         self.next_id = 0
         self.selector = selectors.DefaultSelector()
         self.selector.register(self.process.stdout, selectors.EVENT_READ)
         self.request("initialize", {
             "protocolVersion": "2024-11-05", "capabilities": {},
-            "clientInfo": {"name": "cardboard-smoke", "version": "1"},
+            "clientInfo": {"name": name, "version": "1"},
         })
         self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
@@ -71,7 +73,7 @@ def main():
         client = Client(binary, document)
         try:
             tools = client.request("tools/list", {})["tools"]
-            assert len(tools) == 49, len(tools)
+            assert len(tools) == 50, len(tools)
             guide = client.value("get_guide", {"topic": "cardboard-design"})
             assert guide["guide"]
             file_id = client.value("list_resources", {})["resources"][0]["id"]
@@ -116,7 +118,71 @@ def main():
             assert reopened.value("export_html", {"fileId": file_id})["html"] == exported
         finally:
             reopened.close()
-    print("MCP smoke passed: 49 tools, editing, search, recoverable errors, export, restart persistence")
+    relay(binary)
+    print("MCP smoke passed: 50 tools, editing, search, recoverable errors, export, restart persistence")
+
+
+def relay(binary):
+    """No app running: the relay hosts headless, the app takes over and leaves, the agent carries on."""
+    with tempfile.TemporaryDirectory(prefix="cardboard-relay-") as temporary:
+        root = pathlib.Path(temporary)
+        flags = ["--socket", str(root / "cardboard.sock"), "--library", str(root / "library")]
+        a = Client(binary, extra=flags, name="agent-a")
+        b = None
+        serve = None
+        try:
+            file_id = a.value("create_file", {"name": "Relay"})["fileId"]
+            info = a.value("get_basic_info", {"fileId": file_id})
+            assert info["connection"]["mode"] == "headless", info
+            assert info["connection"]["editorUrl"].startswith("http://127.0.0.1:"), info
+            frame = a.value("create_artboard", {
+                "fileId": file_id, "name": "A", "styles": {"width": "100px", "height": "100px"},
+            })["nodeId"]
+
+            # A second agent shares the headless host; A's artboard is claimed.
+            b = Client(binary, extra=flags, name="agent-b")
+            blocked = b.tool("update_styles", {
+                "fileId": file_id, "updates": [{"nodeIds": [frame], "styles": {"color": "red"}}],
+            })
+            assert blocked.get("isError") and "agent-a" in blocked["content"][0]["text"], blocked
+            other = b.value("create_artboard", {
+                "fileId": file_id, "name": "B", "styles": {"width": "100px", "height": "100px"},
+            })["nodeId"]
+            # A cannot undo B's edit.
+            assert a.tool("undo", {"fileId": file_id}).get("isError")
+            b.value("finish_working_on_nodes", {"fileId": file_id})
+
+            # The app (here `serve`) starts: the headless host saves and hands over.
+            serve = subprocess.Popen([str(binary), "serve", "--port", "0"] + flags,
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            serve.stdout.readline()
+            for _ in range(50):
+                info = a.tool("get_basic_info", {"fileId": file_id})
+                if not info.get("isError") and info["structuredContent"]["connection"]["mode"] == "serve":
+                    break
+                time.sleep(0.1)
+            assert info["structuredContent"]["connection"]["mode"] == "serve", info
+            assert a.value("get_node_info", {"fileId": file_id, "nodeId": other})["name"] == "B"
+            a.value("rename_nodes", {"fileId": file_id, "updates": [{"nodeId": frame, "name": "A2"}]})
+
+            # The app quits: an agent takes the library back and nothing is lost.
+            serve.terminate()
+            serve.wait(timeout=5)
+            for _ in range(50):
+                info = a.tool("get_basic_info", {"fileId": file_id})
+                if not info.get("isError") and info["structuredContent"]["connection"]["mode"] == "headless":
+                    break
+                time.sleep(0.1)
+            assert info["structuredContent"]["connection"]["mode"] == "headless", info
+            assert a.value("get_node_info", {"fileId": file_id, "nodeId": frame})["name"] == "A2"
+        finally:
+            for client in (a, b):
+                if client:
+                    client.close()
+            if serve and serve.poll() is None:
+                serve.terminate()
+                serve.wait(timeout=5)
+        assert not (root / "cardboard.sock").exists(), "the last host should remove its socket"
 
 
 if __name__ == "__main__":

@@ -67,7 +67,7 @@ export function connect() {
         set({ tabs: msg.tabs, activeFile: msg.activeFile, library: msg.library ?? state.library });
         break;
       case 'document':
-        set({ docs: { ...state.docs, [msg.fileId]: { doc: msg.doc, canUndo: !!msg.canUndo, canRedo: !!msg.canRedo } } });
+        set({ docs: { ...state.docs, [msg.fileId]: { doc: msg.doc, canUndo: !!msg.canUndo, canRedo: !!msg.canRedo, agents: msg.agents ?? {} } } });
         break;
       case 'closed': {
         const docs = { ...state.docs };

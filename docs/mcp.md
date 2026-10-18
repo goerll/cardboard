@@ -2,6 +2,21 @@
 
 MCP uses the official Rust SDK with newline-delimited stdio messages. Desktop clients launch a relay; standalone clients edit an explicitly named file. Mutations serialize through the same shared store used by the native UI.
 
+## Connection and hosting
+
+`cardboard mcp` connects to whoever owns the MCP socket. Exactly one process owns a library at a time, the one bound to the socket, so there is never a second writer:
+
+- **App running:** the relay forwards to it (`connection.mode` is `app`, or `serve` for `cardboard serve`).
+- **Nothing running:** the relay binds the socket and hosts the library in-process (`headless`), with an editor URL in `connection.editorUrl`. Other agents' relays connect to it and share the session.
+- **App starts later:** the app's bind asks the headless host to hand over; the host saves, stops accepting commands and drops its agents. Every relay reconnects to the app and replays the MCP `initialize` handshake, so the agent's session continues. The app binds the socket before reading the library, so it never reads files mid-write.
+- **App quits or restarts:** relays wait about a second for it, then one of them hosts headless again.
+
+Requests in flight during a switch return a tool error asking the agent to re-read and retry, because they may or may not have applied. `--no-fallback` restores the old behavior (fail when no app is running). The relay names its session in `initialize` (`capabilities.experimental["cardboard/session"].id`) so claims and undo authorship survive reconnects; claims themselves live in memory and reset when the owner changes.
+
+Auto-launching the desktop app was considered and rejected as the default: it fails in SSH, CI and headless sessions, surprises people with a window they didn't ask for, and is slow to start. Hosting headless works everywhere, and the app can still join at any moment.
+
+Control lines (`{"cardboard":"status"}`, `{"cardboard":"handover"}`) sent as the first line on the socket are answered with one JSON line and never reach MCP. `cardboard doctor` uses `status` and checks the binary on PATH, the running owner, socket and library paths, Claude Code's MCP config and Chromium.
+
 ## Tool surface
 
 | Area | Tools |
@@ -13,7 +28,7 @@ MCP uses the official Rust SDK with newline-delimited stdio messages. Desktop cl
 | Tokens | `get_tokens`, `create_tokens`, `set_tokens` |
 | Export | `get_jsx`, `export_html` |
 | See and measure | `screenshot`, `get_bounds` |
-| Session and history | `finish_working_on_nodes`, `undo`, `redo` |
+| Session and history | `start_working_on_nodes`, `finish_working_on_nodes`, `undo`, `redo` |
 
 Inspect `tools/list` for authoritative JSON schemas. The implementation lives in `src/tools.rs`.
 
@@ -98,14 +113,14 @@ Node ids may be given bare: `581` and `"581"` mean `node-581` (and `pageId: 2` m
 
 - Explicit `fileId` is required by schemas for document tools. A relay does not implicitly pin to the currently visible tab. `open_file` changes the active tab; explicit targets remain independent.
 - Batch commands are atomic: any invalid item rejects the whole batch. Read tools (`get_*` other than `get_bounds`, `find_nodes`, `export_html`) may be mixed into a batch and see the edits before them; file tools and `undo`/`redo` must be called on their own. Successful edits validate the model and save before reporting success. Save errors roll back the model and history.
-- Undo and redo apply to workspace history. Revisions and ID counters remain monotonic. History is limited to 100 in-memory snapshots.
+- Undo and redo apply to per-file history. Revisions and ID counters remain monotonic. History is limited to 200 in-memory snapshots. An agent can only undo or redo a step it made itself; if the latest step belongs to the person or another agent, `undo` fails and the agent should fix forward. The person can undo anything. Selective undo of an agent's older edits beneath someone else's is not implemented.
 - Imported designs cannot execute scripts. `write_html` parses with html5ever (the WHATWG HTML algorithm browsers use), so named entities, unquoted attributes, void elements without `/>` and optional end tags (`p`, `li`, `dt`, `dd`, table rows/cells) are accepted; `<div />` is still read as an empty element. An allowlist then maps unknown tags to `div`/`span`, drops unsupported attributes, SVG elements, `<style>`/`<link>`/`<meta>` and invalid CSS declarations, and reports each in `warnings`. Scripts, active embeds, event handlers, `javascript:` URLs, unclosed block elements at the end and truncated tags are errors.
 - `write_html` takes `html` (up to 1 MiB) or an absolute `path` to a local `.html`/`.htm`/`.svg` file (up to 8 MiB), so large imports don't pass through the chat. `index` counts all children: a target's own text becomes a leading `Text` layer first, so index 0 inserts before it. `move_nodes` and `duplicate_nodes` follow the same rule.
 - `get_styles` reports authored values. Width/height in basic info are CSS declarations, not measured geometry; use `get_bounds` for measured boxes and computed styles.
 - `screenshot` and `get_bounds` render the live in-memory document (not the saved file) in a headless Chromium-based browser, launched per call with a throwaway profile and driven over the DevTools protocol. The page holds just the node's artboard, positioned at 0,0 with the editor's frame CSS and the file's tokens; the viewport is the artboard's px size (1440x900 otherwise). The browser is `CARDBOARD_BROWSER` if set, else Chrome, Chromium, Edge or Brave from standard install locations and `PATH`; without one, both tools fail with an actionable error. Screenshots come back as MCP image content (PNG; JPEG above ~3.5 MB), capped at 4096 px per edge and 4 MP, and can also be written to an absolute `path`. A call takes about a second. Neither tool runs inside `batch`.
 - `get_jsx` supports only `inline-styles`. `get_tokens` can return JSON, CSS, or a Tailwind theme block; this does not imply Tailwind JSX generation.
 - `set_text_content` edits leaf text; it rejects nodes with children. Token renames rewrite exact `var(--name)` references, not every possible CSS fallback expression.
-- `finish_working_on_nodes` acknowledges completion; presence markers are not implemented.
+- Multi-agent claims: editing a layer claims it for that agent, as does `start_working_on_nodes`; `write_html` into a container claims only the new layers. While claimed, other agents get a tool error if they edit the layer or anything inside it, or delete, replace or move a layer containing it (including deleting its page). Claims expire 2 minutes after the agent's last edit in the file and are released by `finish_working_on_nodes` (given layers and their descendants, or all of the agent's layers when `nodeIds` is omitted). The editor shows claimed layers with the agent's name. The person in the editor is never blocked.
 - Failures are MCP tool results with `isError`, preserving the connection so agents can inspect and retry. Protocol/schema errors remain protocol errors.
 
 ## Parity roadmap

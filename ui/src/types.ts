@@ -56,4 +56,6 @@ export interface OpenDoc {
   doc: CardboardDocument;
   canUndo: boolean;
   canRedo: boolean;
+  /** Layers agents are working on: node id → agent name. */
+  agents: Record<string, string>;
 }

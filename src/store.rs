@@ -1,5 +1,6 @@
 //! Open documents, per-file history, the local library and debounced atomic saves.
 use crate::document::{Document, Page, Result};
+use crate::presence::{Actor, Claims};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -154,9 +155,12 @@ pub fn artboard_frames(page: &Page) -> Vec<(f64, f64, f64, f64)> {
 pub struct OpenFile {
     pub doc: Document,
     pub path: Option<PathBuf>,
-    undo: Vec<Document>,
-    redo: Vec<Document>,
+    /// Snapshots with the agent whose edit they undo (None: the person in the editor).
+    undo: Vec<(Document, Option<Actor>)>,
+    redo: Vec<(Document, Option<Actor>)>,
     pub dirty: bool,
+    /// Agents' soft locks on layers; not saved, not history.
+    pub claims: Claims,
     /// Bumps on every observable change, including selection and page switches.
     pub seq: u64,
 }
@@ -168,6 +172,7 @@ impl OpenFile {
             undo: vec![],
             redo: vec![],
             dirty: false,
+            claims: Claims::default(),
             seq: 1,
         }
     }
@@ -210,6 +215,8 @@ pub struct Store {
     /// Bumps when the library listing may have changed.
     pub library_seq: u64,
     pub last_edit: Instant,
+    /// The agent running the current command, None for the person in the editor.
+    pub actor: Option<Actor>,
 }
 
 impl Store {
@@ -225,6 +232,7 @@ impl Store {
             generation: 0,
             library_seq: 0,
             last_edit: Instant::now(),
+            actor: None,
         }
     }
     /// An in-memory store with one open, active "Untitled" file.
@@ -406,7 +414,7 @@ impl Store {
             file.doc = before;
             return Err(e);
         }
-        file.undo.push(before);
+        file.undo.push((before, self.actor.clone()));
         if file.undo.len() > HISTORY {
             file.undo.remove(0);
         }
@@ -446,12 +454,23 @@ impl Store {
             .files
             .get_mut(id)
             .ok_or_else(|| format!("File {id} is not open"))?;
-        let mut previous = if redo {
-            file.redo.pop()
-        } else {
-            file.undo.pop()
+        let stack = if redo { &mut file.redo } else { &mut file.undo };
+        let author = &stack.last().ok_or("No history available")?.1;
+        // An agent may only step back over its own edits, never the person's or another agent's.
+        if let Some(actor) = &self.actor
+            && author.as_ref().map(|a| &a.id) != Some(&actor.id)
+        {
+            let who = author
+                .as_ref()
+                .map_or("the person in the editor".to_string(), |a| {
+                    format!("another agent ({})", a.name)
+                });
+            return Err(format!(
+                "The latest {} step in this file was made by {who}; undoing it would revert their work. Fix forward with an edit instead.",
+                if redo { "redo" } else { "undo" }
+            ));
         }
-        .ok_or("No history available")?;
+        let (mut previous, author) = stack.pop().unwrap();
         let current = file.doc.clone();
         previous.revision = current.revision + 1;
         previous.next_id = previous.next_id.max(current.next_id);
@@ -470,20 +489,42 @@ impl Store {
             && let Err(e) = write_document(path, &previous)
         {
             if redo {
-                file.redo.push(previous)
+                file.redo.push((previous, author))
             } else {
-                file.undo.push(previous)
+                file.undo.push((previous, author))
             }
             return Err(e);
         }
         file.doc = previous;
         if redo {
-            file.undo.push(current)
+            file.undo.push((current, author))
         } else {
-            file.redo.push(current)
+            file.redo.push((current, author))
         }
         self.touched(id);
         Ok(())
+    }
+
+    /// Claims changed: push to clients without saving or touching history.
+    pub fn presence_changed(&mut self, id: &str) {
+        if let Some(f) = self.files.get_mut(id) {
+            f.seq += 1;
+            self.generation += 1;
+        }
+    }
+    /// Drop expired claims everywhere. Returns whether clients need a push.
+    pub fn expire_claims(&mut self) -> bool {
+        let now = Instant::now();
+        let changed: Vec<String> = self
+            .files
+            .iter_mut()
+            .filter(|(_, f)| !f.claims.is_empty())
+            .filter_map(|(id, f)| f.claims.prune(&f.doc, now).then(|| id.clone()))
+            .collect();
+        for id in &changed {
+            self.presence_changed(id);
+        }
+        !changed.is_empty()
     }
 
     /// Write every dirty file and the library metadata. Files that fail stay dirty.

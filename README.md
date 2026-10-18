@@ -50,7 +50,7 @@ Run the same command again to update. The installer puts the desktop app where y
 
 ## Connect your agent
 
-Keep Cardboard open, then add it as an MCP server. With Claude Code:
+Add Cardboard as an MCP server. With Claude Code:
 
 ```sh
 claude mcp add cardboard -- cardboard mcp
@@ -62,7 +62,7 @@ Any other MCP client takes the same command:
 { "mcpServers": { "cardboard": { "command": "cardboard", "args": ["mcp"] } } }
 ```
 
-`cardboard mcp` relays the agent to the running app (over a Unix socket on macOS and Linux, a named pipe on Windows). To let an agent edit one file without the app open: `cardboard mcp --document design.cardboard`. The full tool list is in [docs/mcp.md](docs/mcp.md).
+`cardboard mcp` relays the agent to the running app (over a Unix socket on macOS and Linux, a named pipe on Windows). If the app isn't running, the agent's session hosts your library itself and prints an editor URL you can open to watch; start the app at any time and it takes over without dropping the agent. Pass `--no-fallback` to fail instead. To let an agent edit one file in isolation: `cardboard mcp --document design.cardboard`. If an agent can't connect, run `cardboard doctor`. The full tool list is in [docs/mcp.md](docs/mcp.md).
 
 ## Using it
 

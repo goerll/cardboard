@@ -208,7 +208,7 @@ fn sync(hub: &Hub, pushed: &mut Pushed) -> Vec<String> {
         if pushed.files.get(id) != Some(&file.seq) {
             pushed.files.insert(id.clone(), file.seq);
             out.push(
-                json!({"type":"document","fileId":id,"doc":&file.doc,"canUndo":file.can_undo(),"canRedo":file.can_redo()})
+                json!({"type":"document","fileId":id,"doc":&file.doc,"canUndo":file.can_undo(),"canRedo":file.can_redo(),"agents":file.claims.to_json()})
                     .to_string(),
             );
         }

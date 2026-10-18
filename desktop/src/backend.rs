@@ -14,9 +14,8 @@ impl Backend {
         library: Option<PathBuf>,
     ) -> Result<Self, String> {
         let library = library.unwrap_or_else(Store::default_library);
-        let store = Store::library(&library, Some(&Store::legacy_workspace()))?;
-        let hub = Hub::new(store);
-        // Bind before opening the window, so a second editor cannot unlink a live socket.
+        // Bind before reading the library, so a second editor cannot unlink a live socket and an
+        // agent session hosting the library headless saves and hands it over first.
         let socket = cardboard::mcp::default_socket();
         // bind_socket reclaims a socket file left behind by a crashed editor.
         let listener = cardboard::mcp::bind_socket(&socket).map_err(|e| {
@@ -25,6 +24,8 @@ impl Backend {
                 socket.display()
             )
         })?;
+        let store = Store::library(&library, Some(&Store::legacy_workspace()))?;
+        let hub = Hub::new(store);
         let url = runtime.block_on(async {
             hub.spawn_autosave();
             let shared = hub.clone();

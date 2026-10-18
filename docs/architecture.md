@@ -73,7 +73,8 @@ Server → client:
   "activeFile": "f-.." | null, "library": "/home/u/Documents/Cardboard" }
 // on connect for every open file, and after any change to that file
 // (edit, undo, selection, active page) from any source, UI or MCP
-{ "type": "document", "fileId": "f-..", "doc": { ...Document... }, "canUndo": true, "canRedo": false }
+{ "type": "document", "fileId": "f-..", "doc": { ...Document... }, "canUndo": true, "canRedo": false,
+  "agents": { "node-12": "claude-code" } }   // layers agents are working on (see docs/mcp.md)
 { "type": "closed", "fileId": "f-.." }
 // library contents changed (create/rename/archive/delete/save of a closed file)
 { "type": "library" }
@@ -131,11 +132,12 @@ Changed existing tools:
 ## Rust API for hosts (desktop)
 
 ```rust
+// Bind first: a headless agent host saves and hands the library over before we read it.
+let listener = cardboard::mcp::bind_socket(&cardboard::mcp::default_socket())?;
 let hub = cardboard::hub::Hub::new(cardboard::store::Store::library(&dir, Some(&Store::legacy_workspace()))?);
 hub.spawn_autosave();                                   // inside a Tokio runtime
 let server = cardboard::server::run_server(hub.clone(), 0).await?; // Server { addr, token, url, task }
 // MCP for agents on the same hub:
-let listener = cardboard::mcp::bind_socket(&cardboard::mcp::default_socket())?;
 tokio::spawn(cardboard::mcp::serve_socket(listener, hub.clone()));
 // open server.url in the window; on exit: hub.flush()
 ```

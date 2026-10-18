@@ -1,4 +1,4 @@
-use cardboard::{hub::Hub, mcp::CardboardServer, store::Store, tools};
+use cardboard::{hub::Hub, mcp::CardboardServer, relay, store::Store, tools};
 use rmcp::ServiceExt;
 use std::path::PathBuf;
 
@@ -8,56 +8,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let command = args.first().map(String::as_str).unwrap_or("help");
     let option = |name: &str| args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
     let path_option = |name: &str| option(name).map(PathBuf::from);
-    if command == "mcp" && option("--document").is_none() {
-        let path = path_option("--socket").unwrap_or_else(cardboard::mcp::default_socket);
-        let fail = |e: std::io::Error| {
-            format!(
-                "Cannot connect to Cardboard at {}: {e}. Open the desktop app or `cardboard serve`, or use mcp --document PATH for standalone editing.",
-                path.display()
-            )
-        };
-        #[cfg(unix)]
-        let stream = tokio::net::UnixStream::connect(&path).await.map_err(fail)?;
-        #[cfg(windows)]
-        let stream = tokio::net::windows::named_pipe::ClientOptions::new()
-            .open(&path)
-            .map_err(fail)?;
-        let (mut reader, mut writer) = tokio::io::split(stream);
-        let mut input = tokio::io::stdin();
-        let mut output = tokio::io::stdout();
-        tokio::select! { r=tokio::io::copy(&mut input,&mut writer)=>{r?;}, r=tokio::io::copy(&mut reader,&mut output)=>{r?;} }
-        return Ok(());
-    }
+    let socket = || path_option("--socket").unwrap_or_else(cardboard::mcp::default_socket);
+    let library = || path_option("--library").unwrap_or_else(Store::default_library);
     match command {
+        "mcp" if option("--document").is_none() => {
+            let options = relay::Options {
+                socket: socket(),
+                library: library(),
+                fallback: !args.iter().any(|a| a == "--no-fallback"),
+            };
+            relay::run(options, shutdown_signal()).await?;
+        }
         "mcp" => {
             let path = path_option("--document").unwrap();
             let hub = Hub::new(Store::open_document(&path)?);
-            let service = CardboardServer { store: hub }
+            let service = CardboardServer::new(hub)
                 .serve(rmcp::transport::stdio())
                 .await?;
             service.waiting().await?;
         }
+        "doctor" => {
+            if !cardboard::doctor::run(&socket(), &library()) {
+                std::process::exit(1);
+            }
+        }
         "serve" => {
-            let library = path_option("--library").unwrap_or_else(Store::default_library);
+            let library = library();
             let port = option("--port")
                 .map(|p| p.parse::<u16>())
                 .transpose()?
                 .unwrap_or(0);
+            // Own the socket before reading the library; a headless agent host saves and hands over.
+            let socket = socket();
+            let listener = cardboard::mcp::bind_socket(&socket)?;
             let hub = Hub::new(Store::library(&library, Some(&Store::legacy_workspace()))?);
             hub.spawn_autosave();
             let server = cardboard::server::run_server(hub.clone(), port).await?;
-            let socket = {
-                let socket = path_option("--socket").unwrap_or_else(cardboard::mcp::default_socket);
-                let listener = cardboard::mcp::bind_socket(&socket)?;
-                let shared = hub.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = cardboard::mcp::serve_socket(listener, shared).await {
-                        eprintln!("MCP server ended: {e}");
-                    }
-                });
-                eprintln!("Cardboard MCP listening on {}", socket.display());
-                socket
-            };
+            hub.set_host(serde_json::json!({"mode":"serve","editorUrl":server.url}));
+            let shared = hub.clone();
+            tokio::spawn(async move {
+                if let Err(e) = cardboard::mcp::serve_socket(listener, shared).await {
+                    eprintln!("MCP server ended: {e}");
+                }
+            });
+            eprintln!("Cardboard MCP listening on {}", socket.display());
             eprintln!("Cardboard library: {}", library.display());
             println!("{}", server.url);
             if args.iter().any(|a| a == "--open") {
@@ -80,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", result["html"].as_str().unwrap());
         }
         _ => println!(
-            "Cardboard {}\n\nDesktop app: cardboard-desktop\nEditor in a browser: cardboard serve [--library DIR] [--port N] [--open] [--socket PATH]\nAgent relay: cardboard mcp [--socket PATH]\nStandalone: cardboard mcp --document FILE.cardboard\nHTML export: cardboard export --document FILE.cardboard",
+            "Cardboard {}\n\nDesktop app: cardboard-desktop\nEditor in a browser: cardboard serve [--library DIR] [--port N] [--open] [--socket PATH]\nAgent relay: cardboard mcp [--socket PATH] [--library DIR] [--no-fallback]\n  (hosts the library headless when no app is running; the app takes over when it starts)\nCheck setup: cardboard doctor [--socket PATH] [--library DIR]\nStandalone: cardboard mcp --document FILE.cardboard\nHTML export: cardboard export --document FILE.cardboard",
             env!("CARGO_PKG_VERSION")
         ),
     }
