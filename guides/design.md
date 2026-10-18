@@ -91,7 +91,55 @@ type, not three tints of the same layout.
   weights you use. Fonts that are only installed on this computer (`list_fonts`) won't travel
   with the file. Always give a fallback: `font-family: "Space Grotesk", system-ui, sans-serif`.
 
-## 5. Build in small steps
+## 5. Landing and marketing pages
+
+A landing page has one job: within the first screen a visitor sees (about 1440×900 on a desktop,
+nav included), say what the product is and show it. Every section after that proves one claim.
+Most first drafts fail the same ways: the product visual is small and sparse, the features are a
+row of icon cards, and nothing on the page is memorable. Plan against those up front.
+
+- **Plan the story, not just the look.** Add a section outline to your plan: headline claim, the
+  hero visual, three to five claims each with its own evidence, social proof, closing ask. Write
+  the real headline and section titles before drawing.
+- **The first screen.** A headline of two lines at most, large (roughly 56–88px at 1440 wide) with
+  tight tracking; one or two sentences of supporting text, muted, around 18–20px and under ~60
+  characters per line; one primary action and one quieter secondary action. A small announcement
+  pill above the headline is a common, useful touch. The hero visual must at least start inside
+  the first screen.
+- **Show the product, big.** The hero visual is the most important element on the page. Make it
+  either a believable product screen at screenshot fidelity (app chrome, sidebar or toolbar, many
+  rows of real names, numbers and states, a highlighted moment that tells the story), sized to
+  dominate: half the width or more beside the headline, or the full content width below a centered
+  one, allowed to bleed off the edge. Or, when the product has no screen worth showing, one bold
+  visual idea (a photograph, a large graphic or object). Four rows and a lot of empty panel reads
+  as a placeholder, not a product.
+- **Every feature shows its evidence.** Don't tell the main features as a row of identical cards
+  with an icon tile, a title and a paragraph; that's the template default. Pair each claim with
+  the specific piece of UI that proves it (the notification, the chart, the diff, the settings
+  panel), and vary the layout from section to section: text beside a visual, a full-width visual
+  under a short heading, a grid of small fragments of different sizes. Avoid the same layout
+  twice in a row. Small icon-and-text grids are fine for secondary detail lists.
+- **Build mockups like real UI.** Make their pieces components, use real content, UI-sized text
+  inside (12–14px), and frame each one as an object on the page: a window or panel on a tinted,
+  gradient or photographic backdrop, with either a hairline ring or a soft wide shadow. Mockups
+  are where a page earns trust, so give them the most care.
+- **Rhythm.** One content width for the whole page with left edges that line up across sections,
+  generous vertical padding between sections (often 120–160px at desktop), and one or two changes
+  of ground (a dark or tinted band) to pace the scroll, not every section alternating.
+- **Proof.** A muted row of five to seven customer logos right after the hero, at an even visual
+  size. Later, a testimonial with a believable name, role and company, and figures shown big.
+- **One memorable device.** Pick one thing a visitor would remember and carry it through the page:
+  a glow or gradient behind the product, a photograph, a pattern or grid, an illustration style, a
+  display serif. A flat ground with generic cards everywhere looks like a template however
+  clean it is.
+- **Close and footer.** End with the primary action again under a fresh line, then a quiet, dense
+  footer.
+- **Review it like a visitor.** Screenshot the hero section on its own and the whole artboard.
+  Ask: can I tell what this is in five seconds, what's the single most striking thing on the page
+  (if nothing, that's the next fix), does every section have something to look at besides text,
+  and do two neighbouring sections share a layout? Fix the biggest of those before polishing.
+
+## 6. Build in small steps
 
 - One visual group per `write_html` call: a nav bar, a heading block, one card, one row, a
   footer. If a call is getting past roughly fifteen lines of HTML, split it. Seeing a design
@@ -121,9 +169,9 @@ type, not three tints of the same layout.
   The person navigates by those names.
 - Let artboards grow with content. If something gets clipped, set the artboard's height to
   `fit-content` (or remove the fixed height) instead of guessing a bigger number.
-- After each visual group, take a `screenshot` and look at it (see section 9).
+- After each visual group, take a `screenshot` and look at it (see section 11).
 
-## 6. Line things up
+## 7. Line things up
 
 Repeated rows (menus, lists, tables, settings, layer-like trees) need shared columns. Give
 icons, badges and trailing buttons fixed-width slots with `flex-shrink: 0`, and keep the slot
@@ -150,7 +198,7 @@ off and turn into a pile of layers. Find names with `search_icons` (for example
   `<icon />` like on any element. Draw custom SVG only for things no set has, like a logo or an
   illustration.
 
-## 7. Tokens
+## 8. Tokens
 
 - If the file has tokens, use them: `color: var(--color-text)`, `padding: var(--spacing-4)`.
   Tokens also work in SVG `fill` and `stroke`.
@@ -199,7 +247,7 @@ tokens against a full specimen instead of a single screen:
    utilities. Paste it into the project's global CSS. Mention any extension tokens the project's
    components need to read.
 
-## 8. Images
+## 9. Images
 
 - Put images in the file with `import_image`: from a `url`, a local `path`, a `dataUri`, or a
   `stockId` from `search_images`. It returns a `src` like `/asset/3f9a….png` to use in
@@ -210,7 +258,7 @@ tokens against a full specimen instead of a single screen:
   keep the attribution that `import_image` stores; credit the photographer where it ships.
 - Give every meaningful image real `alt` text. Use `object-fit: cover` on fixed-size frames.
 
-## 9. What the HTML importer accepts
+## 10. What the HTML importer accepts
 
 Write HTML the way you normally would. `write_html` parses it like a browser: named entities
 (`&nbsp;`, `&mdash;`, a bare `&` in "Paper & Ink"), `<img>` and `<br>` without a slash, and
@@ -227,7 +275,7 @@ blocks and stylesheets are ignored, and classes are kept as metadata but don't a
 - `index` in `insert-children` counts every child, text included: index 0 puts an icon before
   a button's label.
 
-## 10. Check your work
+## 11. Check your work
 
 Look at what you made. `screenshot` renders any artboard or layer from the live file
 (unsaved edits included) and shows it to you as an image; `get_bounds` measures the rendered
@@ -249,7 +297,7 @@ boxes. Both render the way the canvas does, with the file's tokens.
   of it after your last change to it. If rendering is unavailable (no Chromium-based browser
   installed), say so and fall back to `get_tree_summary` and `get_styles`.
 
-## 11. Finishing and handing off
+## 12. Finishing and handing off
 
 - Layers you edit or create are marked in the editor as yours for 2 minutes after your last
   edit; other agents can't change them meanwhile. Claim a whole area up front with
