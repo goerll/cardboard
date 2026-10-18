@@ -1759,3 +1759,24 @@ fn instance_layer_state_set_alongside_the_main_sticks() {
     );
     assert!(visible(&mut s, &on_c));
 }
+
+#[test]
+fn write_html_mode_defaults_to_insert_children() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let ids = edit(
+        &mut s,
+        "write_html",
+        json!({"html":"<p>Hi</p>","targetNodeId":frame}),
+    )["nodeIds"]
+        .clone();
+    let id = ids[0].as_str().unwrap();
+    let doc = s.file(&fid(&s)).unwrap();
+    assert!(
+        doc.node(&frame)
+            .unwrap()
+            .children
+            .iter()
+            .any(|c| c.id == id)
+    );
+}

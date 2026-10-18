@@ -1178,7 +1178,9 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             let nodes = import.nodes;
             let ids = nodes.iter().map(|n| n.id.clone()).collect::<Vec<_>>();
             let layers = created_layers(&nodes, &import.named);
-            match string(args, "mode")? {
+            match args.get("mode").map_or(Ok("insert-children"), |m| {
+                m.as_str().ok_or("mode must be a string")
+            })? {
                 "insert-children" => {
                     hoist_text(doc, target)?;
                     let parent = doc.node_mut(target)?;
@@ -1879,9 +1881,9 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "write_html",
-        "Insert one visual group as static HTML with inline CSS, parsed like a browser would (named entities, unclosed <p>/<li>, <img> without a slash are fine). Pass html inline, or path (absolute, .html/.htm/.svg, up to 8 MiB) to import a large file without sending it through the chat. Unsupported tags/attributes are mapped or dropped and reported in warnings; scripts, event handlers and javascript: URLs are rejected. index counts every child, text included. Returns nodeIds (the top-level layers), layers (layer-name -> id, an array when a name repeats; give layer-name to anything you will edit next) and texts (up to 12 unnamed text layers as {id, tag, text}), so no re-read is needed. Preserve existing nodes through move/duplicate instead of rewriting them.",
+        "Insert one visual group (mode defaults to insert-children) as static HTML with inline CSS, parsed like a browser would (named entities, unclosed <p>/<li>, <img> without a slash are fine). Pass html inline, or path (absolute, .html/.htm/.svg, up to 8 MiB) to import a large file without sending it through the chat. Unsupported tags/attributes are mapped or dropped and reported in warnings; scripts, event handlers and javascript: URLs are rejected. index counts every child, text included. Returns nodeIds (the top-level layers), layers (layer-name -> id, an array when a name repeats; give layer-name to anything you will edit next) and texts (up to 12 unnamed text layers as {id, tag, text}), so no re-read is needed. Preserve existing nodes through move/duplicate instead of rewriting them.",
         json!({"html":s,"path":s,"targetNodeId":s,"mode":{"type":"string","enum":["insert-children","insert-before","insert-after","replace"]},"index":{"type":"integer","minimum":0}}),
-        vec!["targetNodeId", "mode", "fileId"],
+        vec!["targetNodeId", "fileId"],
         false,
     );
     add(

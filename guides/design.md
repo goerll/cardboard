@@ -284,6 +284,9 @@ blocks and stylesheets are ignored, and classes are kept as metadata but don't a
   does HTML that looks cut off (an unclosed `<div>` or a tag that never ends).
 - For a big import (a whole page you generated or saved), write it to a file and pass its
   absolute `path` instead of `html`. Files may be up to 8 MiB; inline `html` up to 1 MiB.
+- Spaces at the start or end of a flex or grid item's text are dropped by the browser, so
+  `<span>9.9s</span><span> NCCL</span>` in a flex row renders as "9.9sNCCL". Use `gap` between
+  items, or keep the words in one text layer.
 - `index` in `insert-children` counts every child, text included: index 0 puts an icon before
   a button's label.
 
