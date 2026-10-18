@@ -160,6 +160,42 @@ off and turn into a pile of layers. Find names with `search_icons` (for example
   `--breakpoint-*`, `--container-*` and `--opacity-*` when useful.
 - For a translucent version of a token color, use
   `color-mix(in srgb, var(--color-accent) 30%, transparent)`.
+- Tokens can have modes. `light` is the base; `dark` (or any lowercase name) overrides only
+  what differs. Set a mode's value with `set_tokens` and `mode: "dark"`, or both at once with
+  `values: {"light": "#fff", "dark": "#0a0a0a"}`. Show an artboard in another mode with
+  `create_artboard` `mode`, or `set_attributes` `data-mode` on an existing one. To compare
+  modes, duplicate the artboard and set `data-mode="dark"` on the copy.
+
+### Defining a design system
+
+When the work is the system itself (a theme, a component look, a shadcn setup), iterate on
+tokens against a full specimen instead of a single screen:
+
+1. **Seed a theme.** `apply_theme` with a `preset` (`shadcn` for stock shadcn/ui, or `nexus`,
+   `porcelain`, `graphite`, `soft-machine` for more opinionated starting points), or with `css`
+   pasted from shadcn, tweakcn or a project's `globals.css` (`:root` and `.dark`, oklch is
+   fine). This writes the shadcn contract (`--background`, `--primary`, `--border`, `--chart-*`,
+   `--sidebar-*`, `--radius`, `--font-sans`, `--shadow-*`...) for light and dark, plus extension
+   tokens for things shadcn can't express: `--font-display`, `--font-figures`,
+   `--display-weight`, `--display-tracking`, `--radius-control` (buttons), `--radius-field`
+   (inputs), `--radius-chip` (badges), `--card-ring`, `--card-shadow`, `--field-bg`,
+   `--field-border` and `--signal` (one accent dot).
+2. **Open the kit.** `create_kit` builds a "Design system" page with one artboard per mode,
+   side by side: swatches, radius and elevation, type scale, buttons in every variant and size,
+   badges, form controls, cards, stat cards with a chart, a table, tabs, accordion, alerts,
+   toast, tooltip, avatars, skeleton, dialog and dropdown menu. Everything in it is a `var()`
+   reference, so it restyles the moment a token changes. Point the person at that page with
+   `set_active_page`.
+3. **Iterate on tokens, not layers.** Change values with `set_tokens` (pass `mode` for dark
+   values) and look at the result after each meaningful round: render `export_html` in a
+   browser if you have one, or ask the person what they see. Judge the whole kit, both modes:
+   contrast of muted text and borders, whether cards separate from the ground, whether fields
+   read as fields, how the type scale steps. Change a few related tokens per round, not one at
+   a time and not everything at once.
+4. **Hand it off.** `get_tokens` with `format: "shadcn"` returns exactly what shadcn and tweakcn
+   accept: `:root`, `.dark` and an `@theme inline` block mapping the variables onto Tailwind v4
+   utilities. Paste it into the project's global CSS. Mention any extension tokens the project's
+   components need to read.
 
 ## 8. Images
 

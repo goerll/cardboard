@@ -46,6 +46,9 @@ export interface CardboardDocument {
   activePage: string;
   pages: Page[];
   tokens: Record<string, string>;
+  /** Per-mode overrides of `tokens` (the light base). */
+  modes?: Record<string, Record<string, string>>;
+  defaultMode?: string;
   selection: string[];
   fonts?: FontFace[];
 }
@@ -66,6 +69,8 @@ export interface LibraryFile {
   opened: number | null;
   tokens: Record<string, string>;
   fonts?: FontFace[];
+  modes?: Record<string, Record<string, string>>;
+  defaultMode?: string | null;
   background?: string | null;
   artboards: { id: string; name: string; x: number; y: number; w: number; h: number; html: string }[];
 }

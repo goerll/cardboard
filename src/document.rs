@@ -121,7 +121,14 @@ pub struct Document {
     pub next_id: u64,
     pub active_page: String,
     pub pages: Vec<Page>,
+    /// Base token values: the "light" mode.
     pub tokens: BTreeMap<String, String>,
+    /// Per-mode overrides of `tokens` ("dark", or any named mode).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub modes: BTreeMap<String, BTreeMap<String, String>>,
+    /// The mode `:root` renders in; None means light. Layers opt into others with `data-mode`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<String>,
     #[serde(default)]
     pub selection: Vec<String>,
     /// `@font-face` declarations for fonts kept in the asset store.
@@ -144,6 +151,8 @@ impl Document {
                 background: None,
             }],
             tokens: BTreeMap::new(),
+            modes: BTreeMap::new(),
+            default_mode: None,
             selection: vec![],
             fonts: vec![],
         }
@@ -276,6 +285,23 @@ impl Document {
         for face in &self.fonts {
             crate::fonts::validate(face)?;
         }
+        for (mode, overrides) in &self.modes {
+            crate::theme::validate_mode(mode)?;
+            if mode == crate::theme::BASE_MODE {
+                return Err("light is the base mode; its values live in tokens".into());
+            }
+            for (name, value) in overrides {
+                if !self.tokens.contains_key(name) {
+                    return Err(format!("Mode {mode} overrides unknown token {name}"));
+                }
+                crate::html::validate_token(name, value)?;
+            }
+        }
+        if let Some(mode) = &self.default_mode
+            && !self.modes.contains_key(mode)
+        {
+            return Err(format!("Default mode {mode} has no tokens"));
+        }
         crate::components::validate(self)
     }
     pub fn info(&self) -> Value {
@@ -284,6 +310,7 @@ impl Document {
             "nodeCount": self.pages.iter().flat_map(|p| &p.artboards).map(Node::count).sum::<usize>(),
             "artboards": self.pages.iter().flat_map(|p| p.artboards.iter().map(move |n| json!({"id":n.id,"name":n.name,"pageId":p.id,"width":n.styles.get("width"),"height":n.styles.get("height")}))).collect::<Vec<_>>(),
             "tokens": self.tokens, "fonts": crate::fonts::summary(&self.fonts),
+            "modes": crate::theme::mode_names(self), "defaultMode": self.default_mode.as_deref().unwrap_or(crate::theme::BASE_MODE),
             "components": crate::components::summary(self)})
     }
 }

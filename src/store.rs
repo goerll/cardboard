@@ -971,7 +971,7 @@ impl Store {
                 Some((
                     opened.unwrap_or(0).max(modified),
                     json!({"path":key,"name":doc.name,"fileId":doc.id,"open":open.is_some(),"modified":modified,
-                        "opened":opened,"archived":archived,"tokens":doc.tokens,"fonts":doc.fonts,"artboards":artboards,
+                        "opened":opened,"archived":archived,"tokens":doc.tokens,"modes":doc.modes,"defaultMode":doc.default_mode,"fonts":doc.fonts,"artboards":artboards,
                         "background":page.and_then(|p| p.background.clone())}),
                 ))
             })

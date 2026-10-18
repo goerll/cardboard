@@ -1284,3 +1284,178 @@ fn render_tools_accept_bare_ids_outside_tools_call() {
     cardboard::render::prepare(&s, "screenshot", &json!({"nodeId":bare})).unwrap();
     cardboard::render::prepare(&s, "get_bounds", &json!({"nodeIds":[bare.to_string()]})).unwrap();
 }
+
+#[test]
+fn token_modes_render_per_artboard_and_follow_renames() {
+    let mut s = Store::memory();
+    edit(
+        &mut s,
+        "create_tokens",
+        json!({"tokens":[{"name":"--bg","values":{"light":"#ffffff","dark":"#0a0a0a"}},{"name":"--surface","value":"var(--bg)"}]}),
+    );
+    let dark = edit(
+        &mut s,
+        "create_artboard",
+        json!({"name":"Dark","mode":"dark","styles":{"width":"400px","height":"300px","background":"var(--surface)"}}),
+    )["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let doc = s.file(&fid(&s)).unwrap();
+    assert_eq!(doc.node(&dark).unwrap().attributes["data-mode"], "dark");
+    let out = html::document_html(doc, false);
+    // Each mode re-declares aliases so var(--bg) resolves inside the dark artboard.
+    assert!(out.contains(":root{--bg:#ffffff;--surface:var(--bg)}"));
+    assert!(out.contains("[data-mode=\"dark\"]{--bg:#0a0a0a;--surface:var(--bg)}"));
+    assert!(out.contains("data-mode=\"dark\""));
+
+    let tokens = edit(&mut s, "get_tokens", json!({"mode":"dark"}));
+    assert_eq!(tokens["modes"], json!(["light", "dark"]));
+    assert_eq!(tokens["tokens"][0]["value"], "#0a0a0a");
+    assert_eq!(tokens["tokens"][0]["values"]["light"], "#ffffff");
+
+    edit(
+        &mut s,
+        "set_tokens",
+        json!({"tokens":[{"name":"--bg","newName":"--ground"}],"defaultMode":"dark"}),
+    );
+    let doc = s.file(&fid(&s)).unwrap();
+    assert_eq!(doc.modes["dark"]["--ground"], "#0a0a0a");
+    assert_eq!(doc.tokens["--surface"], "var(--ground)");
+    assert!(html::document_html(doc, false).contains(":root{--ground:#0a0a0a"));
+
+    // Deleting the only dark override removes the mode and resets the default.
+    edit(
+        &mut s,
+        "set_tokens",
+        json!({"mode":"dark","tokens":[{"name":"--ground","delete":true}]}),
+    );
+    let doc = s.file(&fid(&s)).unwrap();
+    assert!(doc.modes.is_empty() && doc.default_mode.is_none());
+    assert_eq!(doc.tokens["--ground"], "#ffffff");
+    assert!(tools::call(&mut s, "set_tokens", &json!({"defaultMode":"dark"})).is_err());
+    assert!(
+        tools::call(
+            &mut s,
+            "create_tokens",
+            &json!({"tokens":[{"name":"--x","value":"1px","mode":"Dark Mode"}]})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn apply_theme_imports_tweakcn_css_and_exports_shadcn() {
+    let mut s = Store::memory();
+    let css = r#"
+/* pasted from tweakcn */
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --radius: 0.625rem;
+  --font-sans: "Inter", sans-serif;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --radius: 0.625rem;
+}
+@theme inline {
+  --color-background: var(--background);
+}
+@layer base { body { color: red; } }
+"#;
+    edit(&mut s, "apply_theme", json!({"css":css}));
+    let doc = s.file(&fid(&s)).unwrap();
+    assert_eq!(doc.tokens["--background"], "oklch(1 0 0)");
+    assert_eq!(doc.tokens["--font-sans"], "\"Inter\", sans-serif");
+    // Only real differences are stored per mode.
+    assert_eq!(doc.modes["dark"].len(), 2);
+    assert!(!doc.tokens.contains_key("--color-background"));
+
+    let out = edit(&mut s, "get_tokens", json!({"format":"shadcn"}))["css"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(out.starts_with(":root {\n  --radius: 0.625rem;\n  --background: oklch(1 0 0);"));
+    assert!(out.contains(".dark {\n  --radius: 0.625rem;\n  --background: oklch(0.145 0 0);"));
+    assert!(out.contains("@theme inline {"));
+    assert!(out.contains("  --color-background: var(--background);"));
+    assert!(out.contains("  --radius-sm: calc(var(--radius) * 0.6);"));
+    assert!(out.contains("  --font-sans: var(--font-sans);"));
+    assert!(!out.contains("--color-radius"));
+
+    // Round trip: the exported CSS imports back to the same tokens.
+    let before = s.file(&fid(&s)).unwrap().clone();
+    edit(&mut s, "apply_theme", json!({"css":out,"replace":true}));
+    let after = s.file(&fid(&s)).unwrap();
+    assert_eq!(before.tokens, after.tokens);
+    assert_eq!(before.modes, after.modes);
+
+    assert!(tools::call(&mut s, "apply_theme", &json!({"css":"body { color: red }"})).is_err());
+    assert!(
+        tools::call(
+            &mut s,
+            "apply_theme",
+            &json!({"css":":root { --x: </style>; }"})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn every_preset_is_a_valid_light_and_dark_theme() {
+    for preset in cardboard::theme::PRESETS {
+        let mut s = Store::memory();
+        edit(&mut s, "apply_theme", json!({"preset":preset}));
+        let doc = s.file(&fid(&s)).unwrap();
+        doc.validate().unwrap();
+        for name in [
+            "--background",
+            "--primary",
+            "--card-ring",
+            "--field-bg",
+            "--radius-control",
+        ] {
+            assert!(doc.tokens.contains_key(name), "{preset} lacks {name}");
+        }
+        assert!(!doc.modes["dark"].is_empty(), "{preset} has no dark values");
+    }
+}
+
+#[test]
+fn create_kit_builds_token_only_artboards_in_one_undo_step() {
+    let mut s = Store::memory();
+    let kit = edit(&mut s, "create_kit", json!({}));
+    assert_eq!(kit["modes"], json!(["light", "dark"]));
+    let doc = s.file(&fid(&s)).unwrap();
+    assert_eq!(doc.pages.len(), 2);
+    let page = &doc.pages[1];
+    assert_eq!(page.name, "Design system");
+    assert_eq!(page.artboards.len(), 2);
+    assert_eq!(page.artboards[1].attributes["data-mode"], "dark");
+    assert!(page.artboards[1].position.unwrap()[0] > page.artboards[0].position.unwrap()[0]);
+    // Every color in the kit comes from a token, so editing tokens restyles all of it.
+    fn literal_colors(n: &cardboard::document::Node, found: &mut Vec<String>) {
+        for (k, v) in &n.styles {
+            if v.contains('#') || v.contains("rgb(") || v.contains("rgba(") || v.contains("oklch(")
+            {
+                found.push(format!("{} {k}: {v}", n.name));
+            }
+        }
+        for c in &n.children {
+            literal_colors(c, found);
+        }
+    }
+    let mut found = vec![];
+    for ab in &page.artboards {
+        literal_colors(ab, &mut found);
+    }
+    assert!(found.is_empty(), "{found:?}");
+    assert!(page.artboards[0].count() > 300);
+    edit(&mut s, "undo", json!({}));
+    let doc = s.file(&fid(&s)).unwrap();
+    assert_eq!(doc.pages.len(), 1);
+    assert!(doc.tokens.is_empty());
+}

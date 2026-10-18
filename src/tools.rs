@@ -1,7 +1,7 @@
 use crate::{
     assets, components,
     document::{Document, Node, Result, Store, Styles},
-    html, presence, stock,
+    html, presence, stock, theme,
 };
 use serde_json::{Value, json};
 
@@ -553,6 +553,8 @@ pub const MUTATIONS: &[&str] = &[
     "insert_instance",
     "detach_instance",
     "reset_overrides",
+    "apply_theme",
+    "create_kit",
 ];
 
 pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
@@ -840,14 +842,42 @@ fn read(
         }
         "get_tokens" => {
             let format = args.get("format").and_then(Value::as_str).unwrap_or("json");
+            let mode = args.get("mode").and_then(Value::as_str);
+            if let Some(mode) = mode
+                && mode != theme::BASE_MODE
+                && !doc.modes.contains_key(mode)
+            {
+                return Err(format!(
+                    "Unknown mode {mode}; this file has {}",
+                    theme::mode_names(doc).join(", ")
+                ));
+            }
+            let values = theme::resolved(doc, mode.unwrap_or(theme::BASE_MODE));
             match format {
                 "json" => {
-                    json!({"tokens":doc.tokens.iter().map(|(name,value)| json!({"name":name,"value":value})).collect::<Vec<_>>() })
+                    let tokens = values
+                        .iter()
+                        .map(|(name, value)| {
+                            let mut token = json!({"name":name,"value":value});
+                            if doc.modes.values().any(|o| o.contains_key(name)) {
+                                token["values"] = json!(
+                                    theme::mode_names(doc)
+                                        .iter()
+                                        .map(|m| (m.clone(), theme::resolved(doc, m)[name].clone()))
+                                        .collect::<BTreeMap<_, _>>()
+                                );
+                            }
+                            token
+                        })
+                        .collect::<Vec<_>>();
+                    json!({"tokens":tokens,"modes":theme::mode_names(doc),"defaultMode":doc.default_mode.as_deref().unwrap_or(theme::BASE_MODE)})
                 }
+                "css" if mode.is_none() => json!({"css":theme::tokens_css(doc, true)}),
                 "css" | "tailwind" => {
-                    json!({"css":format!("{} {{\n{}\n}}",if format=="css" {":root"} else {"@theme"},doc.tokens.iter().map(|(k,v)|format!("  {k}: {v};")).collect::<Vec<_>>().join("\n"))})
+                    json!({"css":format!("{} {{\n{}\n}}",if format=="css" {":root"} else {"@theme"},values.iter().map(|(k,v)|format!("  {k}: {v};")).collect::<Vec<_>>().join("\n"))})
                 }
-                _ => return Err("format must be json, css or tailwind".into()),
+                "shadcn" => json!({"css":theme::shadcn_css(doc)}),
+                _ => return Err("format must be json, css, tailwind or shadcn".into()),
             }
         }
         "get_jsx" => {
@@ -1071,6 +1101,11 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                 ("flex-direction".into(), "column".into()),
             ]);
             node.styles.extend(style);
+            if let Some(mode) = args.get("mode") {
+                let mode = mode.as_str().ok_or("mode must be a string")?;
+                theme::validate_mode(mode)?;
+                node.attributes.insert("data-mode".into(), mode.into());
+            }
             if let (Some(x), Some(y)) = (
                 args.get("x").and_then(Value::as_f64),
                 args.get("y").and_then(Value::as_f64),
@@ -1377,18 +1412,54 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
         }
         "create_tokens" | "set_tokens" => {
             let creating = name == "create_tokens";
-            for token in array(args, "tokens")? {
+            let default_mode = args
+                .get("mode")
+                .and_then(Value::as_str)
+                .unwrap_or(theme::BASE_MODE);
+            let tokens: &[Value] = match args.get("tokens") {
+                Some(_) => array(args, "tokens")?.as_slice(),
+                None if !creating && args.get("defaultMode").is_some() => &[],
+                None => return Err("tokens must be an array".into()),
+            };
+            for token in tokens {
                 let name = string(token, "name")?;
                 if name.is_empty() {
                     return Err("Token name is empty".into());
                 }
+                let mode = token
+                    .get("mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or(default_mode);
+                theme::validate_mode(mode)?;
+                // Values to write, light first so a new token exists before its overrides.
+                let mut writes: Vec<(String, String)> = match token.get("values") {
+                    Some(values) => values
+                        .as_object()
+                        .ok_or("values must map mode names to values")?
+                        .iter()
+                        .map(|(m, v)| Ok((m.clone(), css_value(v)?)))
+                        .collect::<Result<_>>()?,
+                    None => token
+                        .get("value")
+                        .map(|v| Ok::<_, String>(vec![(mode.to_string(), css_value(v)?)]))
+                        .transpose()?
+                        .unwrap_or_default(),
+                };
+                writes.sort_by_key(|(m, _)| m != theme::BASE_MODE);
                 if !creating && !doc.tokens.contains_key(name) {
                     return Err(format!(
                         "Token {name} does not exist; use create_tokens first"
                     ));
                 }
                 if token.get("delete").and_then(Value::as_bool) == Some(true) {
-                    doc.tokens.remove(name);
+                    if mode == theme::BASE_MODE {
+                        doc.tokens.remove(name);
+                        for overrides in doc.modes.values_mut() {
+                            overrides.remove(name);
+                        }
+                    } else if let Some(overrides) = doc.modes.get_mut(mode) {
+                        overrides.remove(name);
+                    }
                     continue;
                 }
                 if let Some(new_name) = token.get("newName") {
@@ -1399,6 +1470,11 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                         return Err("New token name is already used".into());
                     }
                     doc.tokens.insert(new_name.into(), value);
+                    for overrides in doc.modes.values_mut() {
+                        if let Some(v) = overrides.remove(name) {
+                            overrides.insert(new_name.into(), v);
+                        }
+                    }
                     // Keep authored references synchronized with a token rename.
                     let old_ref = format!("var({name})");
                     let new_ref = format!("var({new_name})");
@@ -1413,23 +1489,138 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                     for n in doc.pages.iter_mut().flat_map(|p| &mut p.artboards) {
                         rewrite(n, &old_ref, &new_ref);
                     }
-                    for v in doc.tokens.values_mut() {
+                    for v in doc
+                        .tokens
+                        .values_mut()
+                        .chain(doc.modes.values_mut().flat_map(|o| o.values_mut()))
+                    {
                         *v = v.replace(&old_ref, &new_ref);
                     }
                 }
-                if let Some(value) = token.get("value") {
-                    let target = token.get("newName").and_then(Value::as_str).unwrap_or(name);
-                    let value = css_value(value)?;
-                    html::validate_token(target, &value)?;
-                    if creating && doc.tokens.contains_key(target) {
-                        return Err("Token already exists".into());
-                    }
-                    doc.tokens.insert(target.into(), value);
-                } else if creating {
+                if writes.is_empty() && creating {
                     return Err("A new token requires a value".into());
                 }
+                let target = token.get("newName").and_then(Value::as_str).unwrap_or(name);
+                if creating
+                    && writes.first().is_some_and(|(m, _)| m == theme::BASE_MODE)
+                    && doc.tokens.contains_key(target)
+                {
+                    return Err("Token already exists".into());
+                }
+                for (mode, value) in writes {
+                    theme::validate_mode(&mode)?;
+                    html::validate_token(target, &value)?;
+                    if mode == theme::BASE_MODE {
+                        doc.tokens.insert(target.into(), value);
+                        continue;
+                    }
+                    doc.tokens
+                        .entry(target.into())
+                        .or_insert_with(|| value.clone());
+                    let overrides = doc.modes.entry(mode.clone()).or_default();
+                    if creating && overrides.contains_key(target) {
+                        return Err(format!("Token {target} already has a {mode} value"));
+                    }
+                    overrides.insert(target.into(), value);
+                }
             }
-            Ok(json!({"tokens":doc.tokens}))
+            doc.modes.retain(|_, o| !o.is_empty());
+            if let Some(mode) = args.get("defaultMode") {
+                let mode = mode.as_str().ok_or("defaultMode must be a string")?;
+                doc.default_mode = match mode {
+                    "" | theme::BASE_MODE => None,
+                    m if doc.modes.contains_key(m) => Some(m.into()),
+                    m => return Err(format!("Mode {m} has no token values yet; set some first")),
+                };
+            } else if doc
+                .default_mode
+                .as_ref()
+                .is_some_and(|m| !doc.modes.contains_key(m))
+            {
+                doc.default_mode = None;
+            }
+            Ok(json!({"tokens":doc.tokens,"modes":theme::mode_names(doc)}))
+        }
+        "apply_theme" => {
+            let mut sets: BTreeMap<String, theme::Tokens> = BTreeMap::new();
+            let mut merge = |more: BTreeMap<String, theme::Tokens>| {
+                for (mode, tokens) in more {
+                    sets.entry(mode).or_default().extend(tokens);
+                }
+            };
+            if let Some(preset) = args.get("preset") {
+                merge(theme::preset(
+                    preset.as_str().ok_or("preset must be a string")?,
+                )?);
+            }
+            if let Some(css) = args.get("css") {
+                merge(theme::parse_css(
+                    css.as_str().ok_or("css must be a string")?,
+                )?);
+            }
+            if let Some(modes) = args.get("modes") {
+                let mut more = BTreeMap::new();
+                for (mode, tokens) in modes.as_object().ok_or("modes must be an object")? {
+                    let mut set = theme::Tokens::new();
+                    for (k, v) in tokens
+                        .as_object()
+                        .ok_or("each mode must map token names to values")?
+                    {
+                        set.insert(k.clone(), css_value(v)?);
+                    }
+                    more.insert(mode.clone(), set);
+                }
+                merge(more);
+            }
+            if sets.is_empty() {
+                return Err("apply_theme needs a preset, css or modes".into());
+            }
+            for (name, value) in sets.values().flatten() {
+                html::validate_token(name, value)?;
+            }
+            theme::apply(doc, sets, bool_arg(args, "replace"))?;
+            Ok(json!({"tokenCount":doc.tokens.len(),"modes":theme::mode_names(doc)}))
+        }
+        "create_kit" => {
+            if !doc.tokens.contains_key("--background") {
+                let preset = args
+                    .get("preset")
+                    .and_then(Value::as_str)
+                    .unwrap_or("shadcn");
+                theme::apply(doc, theme::preset(preset)?, false)?;
+            }
+            let modes = match args.get("modes") {
+                Some(_) => string_ids(args, "modes")?,
+                None => theme::mode_names(doc),
+            };
+            for mode in &modes {
+                if mode != theme::BASE_MODE && !doc.modes.contains_key(mode) {
+                    return Err(format!(
+                        "Unknown mode {mode}; this file has {}",
+                        theme::mode_names(doc).join(", ")
+                    ));
+                }
+            }
+            let page = match args.get("pageId").and_then(Value::as_str) {
+                Some(page) => page.to_owned(),
+                None => mutate(doc, "create_page", &json!({"name":"Design system"}))?["pageId"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            };
+            let frames = crate::store::artboard_frames(doc.page_mut(&page)?);
+            let mut x = frames.iter().map(|f| f.0 + f.2 + 120.0).fold(0.0, f64::max);
+            let y = frames.iter().map(|f| f.1).fold(f64::INFINITY, f64::min);
+            let y = if y.is_finite() { y } else { 0.0 };
+            let mut ids = vec![];
+            for mode in &modes {
+                let mut node = crate::kit::artboard(doc, mode)?;
+                node.position = Some([x, y]);
+                x += crate::kit::WIDTH + 120.0;
+                ids.push(node.id.clone());
+                doc.page_mut(&page)?.artboards.push(node);
+            }
+            Ok(json!({"pageId":page,"nodeIds":ids,"modes":modes}))
         }
         "insert_icon" => {
             // Same placement rules as write_html; the icon becomes one layer.
@@ -1625,8 +1816,8 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "create_artboard",
-        "Create a top-level flex frame. Supply CSS width and height; use 1440x900 or 390x844 unless the brief says otherwise.",
-        json!({"name":s,"styles":obj,"pageId":s,"x":{"type":"number"},"y":{"type":"number"}}),
+        "Create a top-level flex frame. Supply CSS width and height; use 1440x900 or 390x844 unless the brief says otherwise. mode (e.g. dark) renders its tokens in that mode via data-mode.",
+        json!({"name":s,"styles":obj,"pageId":s,"x":{"type":"number"},"y":{"type":"number"},"mode":s}),
         vec!["name", "styles", "fileId"],
         false,
     );
@@ -1681,23 +1872,37 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "get_tokens",
-        "Read the token set as JSON, CSS or a Tailwind theme block.",
-        json!({"format":{"type":"string","enum":["json","css","tailwind"]}}),
+        "Read the token set as JSON, CSS (:root plus [data-mode] blocks), a Tailwind theme block, or shadcn/tweakcn CSS (:root, .dark, @theme inline). mode resolves values for one mode.",
+        json!({"format":{"type":"string","enum":["json","css","tailwind","shadcn"]},"mode":s}),
         vec!["fileId"],
         true,
     );
     add(
         "create_tokens",
-        "Create CSS variables with names beginning --. Use named roles for colors, spacing and typography.",
-        json!({"tokens":{"type":"array","items":{"type":"object","properties":{"type":s,"name":s,"value":{},"description":s},"required":["name","value"],"additionalProperties":false}}}),
+        "Create CSS variables with names beginning --. Use named roles for colors, spacing and typography. light is the base mode; give mode (per token or for all) or values {light, dark} to set other modes.",
+        json!({"mode":s,"tokens":{"type":"array","items":{"type":"object","properties":{"type":s,"name":s,"value":{},"values":obj,"mode":s,"description":s},"required":["name"],"additionalProperties":false}}}),
         vec!["tokens", "fileId"],
         false,
     );
     add(
         "set_tokens",
-        "Update, rename or delete CSS variables. Renames update exact var(--name) references.",
-        json!({"tokens":{"type":"array","items":{"type":"object","properties":{"name":s,"newName":s,"value":{},"delete":{"type":"boolean"}},"required":["name"],"additionalProperties":false}}}),
-        vec!["tokens", "fileId"],
+        "Update, rename or delete CSS variables. Renames update exact var(--name) references. mode (or values {light, dark}) edits one mode; delete with a non-light mode removes only that override. defaultMode sets the mode the canvas renders in (\"light\" resets).",
+        json!({"mode":s,"defaultMode":s,"tokens":{"type":"array","items":{"type":"object","properties":{"name":s,"newName":s,"value":{},"values":obj,"mode":s,"delete":{"type":"boolean"}},"required":["name"],"additionalProperties":false}}}),
+        vec!["fileId"],
+        false,
+    );
+    add(
+        "apply_theme",
+        "Seed or replace the token set with a full shadcn theme (light + dark) plus extension tokens the kit uses. preset: shadcn, nexus, porcelain, graphite or soft-machine; css: pasted shadcn/tweakcn CSS (:root, .dark, oklch ok); modes: {light:{--name:value}, dark:{...}}. Merges unless replace is true.",
+        json!({"preset":{"type":"string","enum":theme::PRESETS},"css":s,"modes":obj,"replace":{"type":"boolean"}}),
+        vec!["fileId"],
+        false,
+    );
+    add(
+        "create_kit",
+        "Generate a component specimen (buttons, badges, form controls, cards, stats, table, tabs, accordion, alerts, dialog, menu, tooltip, toast, avatars, skeleton, chart, swatches, type scale) styled only by token var() references, one artboard per mode side by side. Seeds a preset when the file has no shadcn tokens. Without pageId it creates a \"Design system\" page.",
+        json!({"pageId":s,"modes":ids,"preset":{"type":"string","enum":theme::PRESETS}}),
+        vec!["fileId"],
         false,
     );
     add(

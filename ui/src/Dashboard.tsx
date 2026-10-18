@@ -3,6 +3,7 @@ import { Archive, Clock, Copy, FolderOpen, LayoutGrid, List, MoreHorizontal, Plu
 import { call, request, useServer } from './api';
 import type { LibraryFile } from './types';
 import { fontFaceCss } from './lib/css';
+import { tokensCss } from './lib/tokens';
 import { Popover, Segmented } from './ui/controls';
 import { getSettings, setSettings, useSettings } from './settings';
 
@@ -297,11 +298,11 @@ function Thumbnail({ file }: { file: LibraryFile }) {
     const maxY = Math.max(...abs.map((a) => a.y + (a.h || 300)));
     const W = maxX - minX;
     const H = maxY - minY;
-    const tokens = Object.entries(file.tokens).map(([k, v]) => `${k}:${v}`).join(';');
+    const tokens = tokensCss(file.tokens, file.modes, file.defaultMode);
     const body = abs.map((a) => `<div style="position:absolute;left:${a.x - minX}px;top:${a.y - minY}px">${a.html}</div>`).join('');
     // The iframe is a fixed 520×320 box scaled down 2x by CSS (see .thumb iframe), so the scale is known.
     const scale = Math.min((520 - 48) / W, (320 - 48) / H) || 1;
-    return `<!doctype html><html><head><meta charset="utf-8"><style>${fontFaceCss(file.fonts)}:root{${tokens}}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:${file.background || '#282828'}}#s{position:absolute;left:50%;top:50%;width:${W}px;height:${H}px;transform:translate(-50%,-50%) scale(${scale});transform-origin:center}</style></head><body><div id="s">${body}</div></body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${fontFaceCss(file.fonts)}${tokens}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:${file.background || '#282828'}}#s{position:absolute;left:50%;top:50%;width:${W}px;height:${H}px;transform:translate(-50%,-50%) scale(${scale});transform-origin:center}</style></head><body><div id="s">${body}</div></body></html>`;
   }, [file]);
   return (
     <div className="thumb" ref={ref} style={{ background: file.background || '#282828' }}>

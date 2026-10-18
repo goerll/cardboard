@@ -7,6 +7,7 @@
 import type { Operation } from '../api';
 import type { CardboardDocument, DesignNode, Page } from '../types';
 import { fontFaceCss } from '../lib/css';
+import { tokensCss } from '../lib/tokens';
 import { activePage, ancestors, artboardPositions, indexPage, isTextLeaf, type NodeIndex, sizeMode, SVG_TAGS, VOID_TAGS } from '../lib/tree';
 
 export type Tool = 'select' | 'hand' | 'frame' | 'rect' | 'text';
@@ -201,7 +202,7 @@ export class CanvasEngine {
     if (this.fontStyle.textContent !== fonts) this.fontStyle.textContent = fonts;
     // The editor page gets them too, so the inspector's font menu previews document fonts.
     if (this.uiFontStyle.textContent !== fonts) this.uiFontStyle.textContent = fonts;
-    this.tokenStyle.textContent = `:root{${Object.entries(doc.tokens).map(([k, v]) => `${k}:${v}`).join(';')}}`;
+    this.tokenStyle.textContent = tokensCss(doc.tokens, doc.modes, doc.defaultMode);
     this.host.style.setProperty('--canvas-bg', this.page.background || '#282828');
     this.syncArtboards();
     this.previewed.clear();

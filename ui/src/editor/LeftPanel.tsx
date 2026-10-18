@@ -33,6 +33,7 @@ import { IconButton, Popover, Segmented, TextField } from '../ui/controls';
 import { ColorRow } from '../ui/ColorPicker';
 import { parseColor } from '../lib/css';
 import { componentRole } from './components';
+import { BASE_MODE, modeNames, resolvedTokens } from '../lib/tokens';
 
 const KIND_ICON: Record<LayerKind, React.ReactNode> = {
   frame: <Frame size={13} />,
@@ -421,8 +422,11 @@ const LayerRow = memo(function LayerRow(props: {
 });
 
 function Theme({ doc }: { doc: CardboardDocument }) {
-  const tokens = Object.entries(doc.tokens);
-  const setToken = (name: string, value: string) => edit([{ tool: 'set_tokens', args: { tokens: [{ name, value }] } }]);
+  const modes = modeNames(doc.modes);
+  const [picked, setMode] = useState(BASE_MODE);
+  const mode = modes.includes(picked) ? picked : BASE_MODE;
+  const tokens = Object.entries(resolvedTokens(doc.tokens, doc.modes, mode));
+  const setToken = (name: string, value: string) => edit([{ tool: 'set_tokens', args: { mode, tokens: [{ name, value }] } }]);
   const colors = tokens.filter(([, v]) => parseColor(v));
   const other = tokens.filter(([, v]) => !parseColor(v));
   const add = (kind: 'color' | 'value') => {
@@ -451,6 +455,11 @@ function Theme({ doc }: { doc: CardboardDocument }) {
   );
   return (
     <div className="theme">
+      {modes.length > 1 && (
+        <div className="tree-head">
+          <Segmented value={mode} options={modes.map((m) => ({ value: m, label: m, title: `Edit ${m} values` }))} onChange={setMode} />
+        </div>
+      )}
       <div className="tree-head">
         <span>Colors</span>
         <span className="spacer" />

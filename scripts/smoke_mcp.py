@@ -73,7 +73,7 @@ def main():
         client = Client(binary, document)
         try:
             tools = client.request("tools/list", {})["tools"]
-            assert len(tools) == 61, len(tools)
+            assert len(tools) == 63, len(tools)
             guide = client.value("get_guide", {"topic": "cardboard-design"})
             assert guide["guide"]
             file_id = client.value("list_resources", {})["resources"][0]["id"]
@@ -117,16 +117,24 @@ def main():
                 image = [c for c in shot["content"] if c["type"] == "image"]
                 assert image and image[0]["mimeType"] == "image/png", shot["content"][0]
                 assert "image" not in shot["structuredContent"]
+            client.value("apply_theme", {"fileId": file_id, "preset": "nexus"})
+            kit = client.value("create_kit", {"fileId": file_id})
+            assert kit["modes"] == ["light", "dark"], kit
+            shadcn = client.value("get_tokens", {"fileId": file_id, "format": "shadcn"})["css"]
+            assert ".dark {" in shadcn and "@theme inline {" in shadcn
+            exported = client.value("export_html", {"fileId": file_id})["html"]
+            assert '[data-mode="dark"]{' in exported
         finally:
             client.close()
         reopened = Client(binary, document)
         try:
             assert reopened.value("get_node_info", {"fileId": file_id, "nodeId": child})["id"] == child
             assert reopened.value("export_html", {"fileId": file_id})["html"] == exported
+            assert reopened.value("get_tokens", {"fileId": file_id, "format": "shadcn"})["css"] == shadcn
         finally:
             reopened.close()
     relay(binary)
-    print("MCP smoke passed: 61 tools, editing, search, image assets, recoverable errors, export, restart persistence")
+    print("MCP smoke passed: 63 tools, editing, search, image assets, recoverable errors, export, theme + kit, restart persistence")
 
 
 def relay(binary):

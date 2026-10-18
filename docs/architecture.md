@@ -175,6 +175,12 @@ an icon layer (`src/icons.rs`): the node is an `<svg>` with no children or text,
 (`html::node_html`, `get_jsx`, the canvas engine) emit the markup as its content. See the Icons
 section of `docs/mcp.md`.
 
+Token modes: `Document.tokens` is the base ("light") set; `Document.modes: {mode: {token: value}}`
+holds per-mode overrides and `Document.defaultMode` the mode `:root` renders in (both serde
+default, skipped when empty). Layers opt into a mode with the `data-mode` attribute. `theme.rs`
+builds the stylesheet (`tokens_css`, mirrored by `ui/src/lib/tokens.ts`), parses and emits
+shadcn/tweakcn CSS and holds the presets; `kit.rs` generates the `create_kit` specimen.
+
 ## Rust API for hosts (desktop)
 
 ```rust
