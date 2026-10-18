@@ -224,3 +224,13 @@ fn component_tools_respect_and_take_claims() {
     ok(&mut s, &a, "finish_working_on_nodes", json!({}));
     ok(&mut s, &b, "update_styles", color(&label));
 }
+
+#[test]
+fn create_kit_claims_its_artboards() {
+    let mut s = Store::memory();
+    let (a, b) = (agent("a"), agent("b"));
+    let kit = ok(&mut s, &a, "create_kit", json!({}));
+    let light = kit["nodeIds"][0].as_str().unwrap().to_string();
+    let error = run(&mut s, &b, "update_styles", color(&light)).unwrap_err();
+    assert!(error.contains("agent a"), "{error}");
+}

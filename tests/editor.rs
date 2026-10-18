@@ -1459,3 +1459,29 @@ fn create_kit_builds_token_only_artboards_in_one_undo_step() {
     assert_eq!(doc.pages.len(), 1);
     assert!(doc.tokens.is_empty());
 }
+
+#[test]
+fn kit_screenshots_carry_every_mode_and_its_icons_are_icon_layers() {
+    let mut s = Store::memory();
+    let kit = edit(&mut s, "create_kit", json!({}));
+    let dark = kit["nodeIds"][1].as_str().unwrap().to_string();
+    // The render page declares the dark set, which the dark artboard opts into.
+    let job = cardboard::render::prepare(&s, "screenshot", &json!({"nodeId":dark})).unwrap();
+    let html = job.html();
+    assert!(html.contains("[data-mode=\"dark\"]{"), "{html}");
+    assert!(html.contains("data-mode=\"dark\""));
+    assert!(html.contains("<path"), "icon markup must render");
+    let icons = edit(
+        &mut s,
+        "find_nodes",
+        json!({"nodeId":dark,"tag":"icon","limit":500}),
+    );
+    assert!(icons["total"].as_u64().unwrap() > 5, "{icons}");
+    assert!(
+        icons["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|n| n["icon"].as_str().unwrap().starts_with("lucide:"))
+    );
+}

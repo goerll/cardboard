@@ -67,8 +67,16 @@ const ICONS: &[(&str, &str)] = &[
 
 fn icon(name: &str, size: u32) -> String {
     let paths = ICONS.iter().find(|(n, _)| *n == name).map_or("", |i| i.1);
+    // data-icon makes each one an icon layer, like insert_icon's, named after its Lucide icon.
+    let lucide = match name {
+        "alert" => "circle-alert",
+        "card" => "credit-card",
+        "logout" => "log-out",
+        "trend" => "trending-up",
+        other => other,
+    };
     format!(
-        r#"<svg layer-name="Icon {name}" viewBox="0 0 24 24" width="{size}" height="{size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">{paths}</svg>"#
+        r#"<svg layer-name="Icon {name}" data-icon="lucide:{lucide}" viewBox="0 0 24 24" width="{size}" height="{size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0">{paths}</svg>"#
     )
 }
 

@@ -231,7 +231,7 @@ fn touched(doc: &Document, name: &str, args: &Value, result: &Value) -> Vec<Stri
     let mut out = vec![];
     match name {
         // Adding to a container holds only the new layers, so others can keep working beside them.
-        "write_html" => out.extend(ids(result, "nodeIds")),
+        "write_html" | "create_kit" => out.extend(ids(result, "nodeIds")),
         "create_artboard" | "insert_icon" | "insert_instance" => out.extend(id(result, "nodeId")),
         "duplicate_nodes" => out.extend(
             result

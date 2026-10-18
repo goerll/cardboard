@@ -183,15 +183,11 @@ fn job(
     kind: Kind,
     assets: Option<&std::path::Path>,
 ) -> Job {
-    let tokens = doc
-        .tokens
-        .iter()
-        .map(|(k, v)| format!("{k}:{v}"))
-        .collect::<Vec<_>>()
-        .join(";");
+    // Every mode is declared, so an artboard or layer with data-mode renders in that mode.
+    let tokens = crate::theme::tokens_css(doc, false);
     let fonts = crate::fonts::css(&doc.fonts);
     let html = format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><style>{fonts}{FRAME_CSS}:root{{{tokens}}}</style></head><body><div class=\"cb-ab\">{}</div></body></html>",
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><style>{fonts}{FRAME_CSS}{tokens}</style></head><body><div class=\"cb-ab\">{}</div></body></html>",
         html::node_html(artboard, true)
     );
     // Stored images and fonts (/asset/...) go in as data URIs: the page is a file:// URL, where
