@@ -1799,3 +1799,17 @@ fn landing_guide_is_its_own_topic() {
             .contains("Refinement pass")
     );
 }
+
+#[test]
+fn write_html_keeps_svg_filters_for_grain() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let html = r##"<svg width="200" height="200"><filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(#grain)"/></svg>"##;
+    let out = edit(&mut s, "write_html", json!({"html":html,"targetNodeId":frame}));
+    assert!(out.get("warnings").is_none(), "{out}");
+    let doc = s.file(&fid(&s)).unwrap();
+    let markup = cardboard::html::node_html(doc.node(&frame).unwrap(), false);
+    assert!(markup.contains("<feTurbulence"), "{markup}");
+    assert!(markup.contains(r#"baseFrequency="0.8""#), "{markup}");
+    assert!(markup.contains(r#"filter="url(#grain)""#), "{markup}");
+}

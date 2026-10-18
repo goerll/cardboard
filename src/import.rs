@@ -356,7 +356,7 @@ fn policy(tag: &str, svg: bool) -> Result<Policy> {
         return Ok(Policy::Keep);
     }
     if svg {
-        // Unknown SVG (filters, <use>, <animate>, <foreignObject>) has no safe generic stand-in.
+        // Unknown SVG (<use>, <animate>, <foreignObject>) has no safe generic stand-in.
         return Ok(Policy::Drop);
     }
     Ok(match tag {

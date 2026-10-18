@@ -62,7 +62,7 @@ export function artboardPositions(page: Page, measured?: Map<string, { w: number
 
 export const TEXT_TAGS = new Set(['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'label', 'a', 'strong', 'em', 'small', 'code', 'pre', 'li', 'button', 'b', 'i', 'u', 's', 'mark', 'blockquote', 'figcaption', 'td', 'th', 'sup', 'sub', 'time', 'dt', 'dd', 'summary', 'legend', 'caption', 'abbr', 'cite', 'q', 'kbd', 'samp', 'var', 'del', 'ins', 'dfn']);
 export const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'wbr', 'source', 'col']);
-export const SVG_TAGS = new Set(['svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'g', 'ellipse', 'text', 'defs', 'linearGradient', 'radialGradient', 'stop', 'clipPath', 'mask', 'tspan']);
+export const SVG_TAGS = new Set(['svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'g', 'ellipse', 'text', 'defs', 'linearGradient', 'radialGradient', 'stop', 'clipPath', 'mask', 'tspan', 'filter', 'feTurbulence', 'feGaussianBlur', 'feColorMatrix', 'feComponentTransfer', 'feFuncR', 'feFuncG', 'feFuncB', 'feFuncA', 'feBlend', 'feComposite', 'feOffset', 'feFlood', 'feMerge', 'feMergeNode', 'feDisplacementMap', 'feMorphology', 'feDropShadow', 'pattern']);
 
 export type LayerKind = 'frame' | 'flex-row' | 'flex-col' | 'grid' | 'text' | 'image' | 'icon' | 'svg' | 'shape' | 'rect';
 export function layerKind(n: DesignNode, artboard = false): LayerKind {
