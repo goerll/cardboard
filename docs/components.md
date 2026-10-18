@@ -68,7 +68,7 @@ another agent has claimed, since those changes come from the component rather th
 
 | Tool | Args | Result |
 | --- | --- | --- |
-| `create_component` | `{nodeId, name?}` | `{componentId}` (same as nodeId). Not allowed on instances or their layers |
+| `create_component` | `{nodeId, name?, moveToPage?}` | `{componentId}` (same as nodeId). Not allowed on instances or their layers. With `moveToPage` (page id, or a name like `"Components"`, matched case-insensitively and created if missing) the main moves there as a top-level frame and a new instance takes its place, in one undo step; adds `{pageId, instanceId}` |
 | `insert_instance` | `{componentId, parentId, pageId?, index?, x?, y?}` | `{nodeId, pageId}`. `parentId: "root"` places a top-level frame on `pageId` (default active page) |
 | `detach_instance` | `{nodeIds}` | plain layers with fresh ids that look identical; nested instances stay linked |
 | `reset_overrides` | `{nodeIds}` | clears all overrides of the given instances |

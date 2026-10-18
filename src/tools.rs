@@ -1117,6 +1117,53 @@ fn swap_icon(doc: &mut Document, args: &Value) -> Result<Value> {
     Ok(json!({"nodeId":id}))
 }
 
+/// `create_component` with `moveToPage`: the main goes to that page (a page id, or a page name,
+/// created if missing) as a top-level frame, and an instance takes its old place.
+fn move_main(doc: &mut Document, id: &str, page: &str) -> Result<Value> {
+    let wanted = page.trim();
+    let found = doc
+        .pages
+        .iter()
+        .find(|p| p.id == wanted)
+        .or_else(|| {
+            doc.pages
+                .iter()
+                .find(|p| p.name.trim().eq_ignore_ascii_case(wanted))
+        })
+        .map(|p| p.id.clone());
+    let page = match found {
+        Some(p) => p,
+        None if wanted.is_empty() => return Err("moveToPage is empty".into()),
+        None if wanted
+            .strip_prefix("page-")
+            .is_some_and(|n| n.parse::<u64>().is_ok()) =>
+        {
+            return Err(format!(
+                "Page {wanted} does not exist; pass an existing page id, or a name such as \"Components\" to create that page"
+            ));
+        }
+        None => mutate(doc, "create_page", &json!({"name":wanted}))?["pageId"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    };
+    let source_page = page_for(doc, id)?;
+    let parent = parent_id(doc, id);
+    if page == source_page && parent.is_none() {
+        // Already a top-level frame on that page; nothing to move.
+        return Ok(json!({"componentId":id,"pageId":page,"instanceId":null}));
+    }
+    let mut main = doc.node(id)?.clone();
+    let mut instance = components::instantiate(doc, id)?;
+    let instance_id = instance.id.clone();
+    instance.position = main.position;
+    doc.replace(id, vec![instance])?;
+    // Beside the page's other frames, top-aligned with the first one.
+    main.position = place_right(doc, &page, 0.0).or(Some([0.0, 0.0]));
+    doc.page_mut(&page)?.artboards.push(main);
+    Ok(json!({"componentId":id,"pageId":page,"instanceId":instance_id}))
+}
+
 /// Where a top-level copy lands on `page` when no x/y is given: right of the rightmost artboard.
 fn place_right(doc: &Document, page: &str, y: f64) -> Option<[f64; 2]> {
     let page = doc.pages.iter().find(|p| p.id == page)?;
@@ -1820,7 +1867,13 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             if let Some(name) = args.get("name").and_then(Value::as_str) {
                 node.name = name.into();
             }
-            Ok(json!({"componentId":id}))
+            match args.get("moveToPage") {
+                None => Ok(json!({"componentId":id})),
+                Some(page) => {
+                    let page = page.as_str().ok_or("moveToPage must be a string")?;
+                    move_main(doc, id, page)
+                }
+            }
         }
         "insert_instance" => {
             let component = string(args, "componentId")?;
@@ -2231,8 +2284,8 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "create_component",
-        "Turn an existing layer into a main component. Then place copies with insert_instance: edits to the main reach every instance, and each instance keeps its own text, style and attribute overrides.",
-        json!({"nodeId":s,"name":s}),
+        "Turn an existing layer into a main component. Then place copies with insert_instance: edits to the main reach every instance, and each instance keeps its own text, style and attribute overrides. With moveToPage (a page id, or a page name such as \"Components\", created if missing) the main moves to that page as a top-level frame and an instance takes its place, in one undo step; the result adds pageId and instanceId. Give the main a width if it relied on its old parent for one.",
+        json!({"nodeId":s,"name":s,"moveToPage":{"type":"string","description":"Page id or name to keep the main on; an instance stays where the layer was"}}),
         vec!["nodeId", "fileId"],
         false,
     );

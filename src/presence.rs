@@ -170,7 +170,15 @@ fn targets(doc: &Document, name: &str, args: &Value) -> Vec<(String, Reach)> {
                     .map(|i| (i, Node)),
             );
         }
-        "create_component" => out.extend(id(args, "nodeId").map(|i| (i, Node))),
+        // Moving the main to another page takes its whole subtree along.
+        "create_component" => {
+            let reach = if args.get("moveToPage").is_some() {
+                Subtree
+            } else {
+                Node
+            };
+            out.extend(id(args, "nodeId").map(|i| (i, reach)));
+        }
         "insert_instance" => out.extend(id(args, "parentId").map(|p| (p, Node))),
         "detach_instance" | "reset_overrides" => {
             out.extend(ids(args, "nodeIds").into_iter().map(|i| (i, Subtree)));
@@ -256,6 +264,10 @@ fn touched(doc: &Document, name: &str, args: &Value, result: &Value) -> Vec<Stri
             }
         }
         "delete_nodes" | "delete_pages" => {}
+        "create_component" => {
+            out.extend(id(args, "nodeId"));
+            out.extend(id(result, "instanceId"));
+        }
         // A move holds the moved layers, not their new parent.
         "move_nodes" => {
             out.extend(
