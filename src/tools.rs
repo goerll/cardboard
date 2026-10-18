@@ -970,7 +970,7 @@ fn read(
 
 /// Run one editing tool, then bring component instances in line with their mains.
 fn apply(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
-    let before = components::snapshot(doc);
+    let before = components::snapshot(doc, name, args);
     let result = mutate(doc, name, args)?;
     components::reconcile(doc, before.as_ref())?;
     Ok(result)

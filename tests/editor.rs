@@ -1542,3 +1542,84 @@ fn partial_themes_are_completed_from_stock_shadcn_per_mode() {
     assert_eq!(doc.tokens["--chart-3"], preset["light"]["--chart-3"]);
     assert!(doc.modes.is_empty());
 }
+
+#[test]
+fn instance_layer_state_set_alongside_the_main_sticks() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let main = insert(&mut s, &frame, "<div><span>Old</span></div>")[0].clone();
+    let old = s.file(&fid(&s)).unwrap().node(&main).unwrap().children[0]
+        .id
+        .clone();
+    edit(&mut s, "create_component", json!({"nodeId":main}));
+    let [a, b] = [0, 1].map(|_| {
+        edit(
+            &mut s,
+            "insert_instance",
+            json!({"componentId":main,"parentId":frame}),
+        )["nodeId"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    });
+    let added = insert(&mut s, &main, "<p>New</p>")[0].clone();
+    let visible = |s: &mut Store, id: &str| {
+        let info = edit(s, "get_node_info", json!({"nodeId":id}));
+        assert_eq!(
+            info["visible"],
+            s.file(&fid(s)).unwrap().node(id).unwrap().visible
+        );
+        info["visible"].as_bool().unwrap()
+    };
+    for layer in [&added, &old] {
+        let (on_a, on_b) = (format!("{a}:{layer}"), format!("{b}:{layer}"));
+        // Hide the layer on its own, then hide it in the main but keep it on `a` in one call.
+        edit(
+            &mut s,
+            "set_node_state",
+            json!({"updates":[{"nodeId":on_b,"visible":false}]}),
+        );
+        assert!(!visible(&mut s, &on_b));
+        edit(
+            &mut s,
+            "set_node_state",
+            json!({"updates":[{"nodeId":layer,"visible":false},{"nodeId":on_a,"visible":true}]}),
+        );
+        assert!(!visible(&mut s, layer) && visible(&mut s, &on_a) && !visible(&mut s, &on_b));
+        // Show it in the main again but keep `b` hiding it, in one call.
+        edit(
+            &mut s,
+            "set_node_state",
+            json!({"updates":[{"nodeId":layer,"visible":true},{"nodeId":on_b,"visible":false}]}),
+        );
+        assert!(visible(&mut s, layer) && visible(&mut s, &on_a) && !visible(&mut s, &on_b));
+        // Another main edit rebuilds the instances without losing either override.
+        edit(
+            &mut s,
+            "update_styles",
+            json!({"updates":[{"nodeIds":[main],"styles":{"padding":"4px"}}]}),
+        );
+        assert!(visible(&mut s, &on_a) && !visible(&mut s, &on_b));
+    }
+    // Listing the main and a fresh instance with the same value is still a main edit.
+    let c = edit(
+        &mut s,
+        "insert_instance",
+        json!({"componentId":main,"parentId":frame}),
+    )["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let on_c = format!("{c}:{added}");
+    edit(
+        &mut s,
+        "set_node_state",
+        json!({"updates":[{"nodeId":added,"visible":false},{"nodeId":on_c,"visible":false}]}),
+    );
+    edit(
+        &mut s,
+        "set_node_state",
+        json!({"updates":[{"nodeId":added,"visible":true}]}),
+    );
+    assert!(visible(&mut s, &on_c));
+}
