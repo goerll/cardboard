@@ -51,6 +51,7 @@ sign() { minisign -S -s "${3:-$work/test.key}" -m "$1" -x "$1.minisig" -t "cardb
 port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 python3 -m http.server --bind 127.0.0.1 "$port" --directory "$work/srv" >/dev/null 2>&1 &
 pids+=($!)
+for _ in $(seq 50); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $port))" 2>/dev/null && break; sleep 0.1; done
 publish() { # publish <archive> [signature]: the fake GitHub "latest release"
   rm -f "$work/srv/"*
   cp "$1" "$work/srv/$asset"
