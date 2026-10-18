@@ -481,7 +481,13 @@ impl Browser {
         let exe = find_browser()?;
         let dir = std::env::temp_dir().join(format!("cardboard-render-{}", random_hex(8)));
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let mut child = Command::new(&exe)
+        let mut command = Command::new(&exe);
+        // Some Linux setups (Ubuntu 24.04 AppArmor, root in containers) have no usable
+        // sandbox; rendering only loads sanitized, script-free documents, so allow opting out.
+        if std::env::var_os("CARDBOARD_BROWSER_NO_SANDBOX").is_some() {
+            command.arg("--no-sandbox");
+        }
+        let mut child = command
             .args([
                 "--headless=new",
                 "--remote-debugging-port=0",
@@ -522,6 +528,12 @@ impl Browser {
                     let _ = child.kill();
                     let _ = child.wait();
                     let _ = std::fs::remove_dir_all(&dir);
+                    if log.iter().any(|l| l.contains("sandbox")) {
+                        return Err(format!(
+                            "{} could not start its sandbox. Set CARDBOARD_BROWSER_NO_SANDBOX=1 to render without it, or point CARDBOARD_BROWSER at another browser.",
+                            exe.display()
+                        ));
+                    }
                     let tail = log[log.len().saturating_sub(5)..].join("\n");
                     return Err(format!(
                         "{} did not start a headless session. {tail}",

@@ -24,5 +24,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check && cargo fmt --check --manifest-path desktop/Cargo.toml
       - run: cargo clippy --locked --all-targets -- -D warnings
+      # Ubuntu 24.04 runners block Chromium's user-namespace sandbox.
       - run: cargo test --locked
+        env:
+          CARDBOARD_BROWSER_NO_SANDBOX: "1"
       - run: cargo build --locked && python3 scripts/smoke_mcp.py
