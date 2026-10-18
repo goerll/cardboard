@@ -144,7 +144,7 @@ fn targets(doc: &Document, name: &str, args: &Value) -> Vec<(String, Reach)> {
     use Reach::*;
     let mut out = vec![];
     match name {
-        "write_html" => {
+        "write_html" | "insert_icon" => {
             let reach = match args.get("mode").and_then(Value::as_str) {
                 Some("replace") => Subtree,
                 _ => Node,
@@ -227,7 +227,7 @@ fn touched(doc: &Document, name: &str, args: &Value, result: &Value) -> Vec<Stri
     match name {
         // Adding to a container holds only the new layers, so others can keep working beside them.
         "write_html" => out.extend(ids(result, "nodeIds")),
-        "create_artboard" => out.extend(id(result, "nodeId")),
+        "create_artboard" | "insert_icon" => out.extend(id(result, "nodeId")),
         "duplicate_nodes" => out.extend(
             result
                 .get("duplicates")

@@ -277,3 +277,34 @@ fn icons_work_in_browser_style_html() {
     assert!(icon.markup.is_some() && icon.children.is_empty());
     assert_eq!(icon.styles["height"], "16px");
 }
+
+#[test]
+fn find_nodes_and_claims_understand_icon_layers() {
+    let (mut s, frame) = setup();
+    let agent = |id: &str| cardboard::presence::Actor {
+        id: id.into(),
+        name: format!("agent {id}"),
+    };
+    s.actor = Some(agent("a"));
+    let icon = edit(
+        &mut s,
+        "insert_icon",
+        json!({"icon":"lucide:arrow-right","targetNodeId":frame}),
+    )["nodeId"]
+        .clone();
+    s.actor = Some(agent("b"));
+    let blocked = tools::call(
+        &mut s,
+        "update_styles",
+        &json!({"updates":[{"nodeIds":[icon],"styles":{"color":"red"}}]}),
+    );
+    assert!(blocked.unwrap_err().contains("agent a"));
+    s.actor = None;
+    for query in [json!({"tag":"icon"}), json!({"name":"lucide:arrow"})] {
+        let found = edit(&mut s, "find_nodes", query);
+        assert_eq!(found["nodes"][0]["id"], icon, "{found}");
+        assert_eq!(found["nodes"][0]["icon"], "lucide:arrow-right");
+    }
+    // Path data is not text: searching it finds nothing.
+    assert_eq!(edit(&mut s, "find_nodes", json!({"text":"M5"}))["total"], 0);
+}

@@ -83,8 +83,8 @@ Style names accept CSS or camelCase spelling and are normalized to CSS names. An
 | Filter | Matches |
 | --- | --- |
 | `text` | case-insensitive substring of the node's own text |
-| `name` | case-insensitive substring of the layer name |
-| `tag` | exact tag, e.g. `button`, `svg` |
+| `name` | case-insensitive substring of the layer name, or of an icon layer's icon name (`lucide:arrow`) |
+| `tag` | exact tag, e.g. `button`, `svg`; `icon` matches icon layers (results include their `icon` name) |
 | `styles` | per property (CSS or camelCase, `*` for any property): a value for an exact match (case and whitespace insensitive), `true`/`false` for present/absent, or `{"contains": "..."}` |
 
 ```json

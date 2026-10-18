@@ -400,12 +400,15 @@ impl Query {
                 StyleTest::Contains(want) => values.iter().any(|v| fold(v).contains(want)),
             }
         };
+        // Icon layers match tag "icon" and their icon name (lucide:arrow-right), never their paths.
+        let icon = n.markup.as_ref().and(n.attributes.get("data-icon"));
         self.text.as_ref().is_none_or(|t| fold(&n.text).contains(t))
-            && self.name.as_ref().is_none_or(|t| fold(&n.name).contains(t))
-            && self
-                .tag
-                .as_ref()
-                .is_none_or(|t| n.tag.eq_ignore_ascii_case(t))
+            && self.name.as_ref().is_none_or(|t| {
+                fold(&n.name).contains(t) || icon.is_some_and(|i| fold(i).contains(t))
+            })
+            && self.tag.as_ref().is_none_or(|t| {
+                n.tag.eq_ignore_ascii_case(t) || (t == "icon" && n.markup.is_some())
+            })
             && self.styles.iter().all(|(k, test)| style(k, test))
     }
     /// Matching nodes in document order, scoped to a page or subtree when given.
@@ -848,6 +851,9 @@ fn read(doc: &Document, name: &str, args: &Value) -> Result<Option<Value>> {
                     if !n.text.is_empty() {
                         let text: String = n.text.chars().take(80).collect();
                         row["text"] = json!(text);
+                    }
+                    if n.markup.is_some() {
+                        row["icon"] = json!(n.attributes.get("data-icon"));
                     }
                     if !queried.is_empty() {
                         let styles: Styles = n
@@ -1351,7 +1357,7 @@ pub fn definitions() -> Vec<Value> {
     let ids = json!({"type":"array","items":s});
     let obj = json!({"type":"object"});
     let max = json!({"type":"integer","minimum":0,"description":"Output budget in characters (default 50000); 0 means no limit"});
-    let query_props = json!({"pageId":s,"nodeId":{"type":"string","description":"Search only this node and its descendants"},"text":{"type":"string","description":"Case-insensitive substring of the node's own text"},"name":{"type":"string","description":"Case-insensitive substring of the layer name"},"tag":{"type":"string","description":"Exact tag, such as button or svg"},"styles":{"type":"object","description":"Property (CSS or camelCase, or * for any) to a test: a value for an exact match, true/false for present/absent, or {\"contains\": text}"}});
+    let query_props = json!({"pageId":s,"nodeId":{"type":"string","description":"Search only this node and its descendants"},"text":{"type":"string","description":"Case-insensitive substring of the node's own text"},"name":{"type":"string","description":"Case-insensitive substring of the layer name (or icon name, such as lucide:arrow)"},"tag":{"type":"string","description":"Exact tag, such as button or svg; icon finds icon layers"},"styles":{"type":"object","description":"Property (CSS or camelCase, or * for any) to a test: a value for an exact match, true/false for present/absent, or {\"contains\": text}"}});
     let query = json!({"type":"object","properties":query_props,"additionalProperties":false,"description":"Target every node find_nodes would match, instead of listing ids"});
     let mut tools = vec![];
     let mut add = |name: &str, description: &str, props: Value, required: Vec<&str>, read: bool| {
