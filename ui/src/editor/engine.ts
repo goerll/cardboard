@@ -6,6 +6,7 @@
 // input can never "fall through" to the canvas.
 import type { Operation } from '../api';
 import type { CardboardDocument, DesignNode, Page } from '../types';
+import { fontFaceCss } from '../lib/css';
 import { activePage, ancestors, artboardPositions, indexPage, isTextLeaf, type NodeIndex, sizeMode, SVG_TAGS, VOID_TAGS } from '../lib/tree';
 
 export type Tool = 'select' | 'hand' | 'frame' | 'rect' | 'text';
@@ -69,6 +70,8 @@ export class CanvasEngine {
   private fdoc!: Document;
   private stage!: HTMLDivElement;
   private tokenStyle!: HTMLStyleElement;
+  private fontStyle!: HTMLStyleElement;
+  private uiFontStyle = document.head.appendChild(document.createElement('style'));
 
   doc: CardboardDocument | null = null;
   page: Page | null = null;
@@ -107,7 +110,7 @@ export class CanvasEngine {
     this.iframe.className = 'cb-frame';
     this.iframe.setAttribute('sandbox', 'allow-same-origin');
     this.iframe.setAttribute('tabindex', '-1');
-    this.iframe.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>${FRAME_CSS}</style><style id="tokens"></style></head><body><div id="stage"></div></body></html>`;
+    this.iframe.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>${FRAME_CSS}</style><style id="fonts"></style><style id="tokens"></style></head><body><div id="stage"></div></body></html>`;
     this.overlay = document.createElement('div');
     this.overlay.className = 'cb-overlay';
     const part = (cls: string) => {
@@ -152,6 +155,7 @@ export class CanvasEngine {
     window.removeEventListener('keydown', this.onKey, true);
     window.removeEventListener('keyup', this.onKey, true);
     this.resizeObserver.disconnect();
+    this.uiFontStyle.remove();
     cancelAnimationFrame(this.raf);
     this.host.replaceChildren();
   }
@@ -162,6 +166,7 @@ export class CanvasEngine {
     this.fdoc = d;
     this.stage = d.getElementById('stage') as HTMLDivElement;
     this.tokenStyle = d.getElementById('tokens') as HTMLStyleElement;
+    this.fontStyle = d.getElementById('fonts') as HTMLStyleElement;
     // Images and fonts change layout after the fact.
     d.addEventListener('load', () => this.requestDraw(), true);
     d.fonts?.addEventListener?.('loadingdone', () => this.requestDraw());
@@ -191,6 +196,11 @@ export class CanvasEngine {
       if (pageChanged) this.fitPending = true;
     }
     if (this.editing && !this.index.nodes.has(this.editing.id)) this.stopEditing(false);
+    // Only touch @font-face rules when they change; rewriting them makes fonts reload.
+    const fonts = fontFaceCss(doc.fonts);
+    if (this.fontStyle.textContent !== fonts) this.fontStyle.textContent = fonts;
+    // The editor page gets them too, so the inspector's font menu previews document fonts.
+    if (this.uiFontStyle.textContent !== fonts) this.uiFontStyle.textContent = fonts;
     this.tokenStyle.textContent = `:root{${Object.entries(doc.tokens).map(([k, v]) => `${k}:${v}`).join(';')}}`;
     this.host.style.setProperty('--canvas-bg', this.page.background || '#282828');
     this.syncArtboards();

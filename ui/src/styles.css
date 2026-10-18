@@ -569,6 +569,15 @@ body.scrubbing * {
 .menu-input {
   padding: 2px 2px 6px;
 }
+.font-list {
+  max-height: 360px;
+  overflow: auto;
+}
+.menu-group {
+  padding: 8px 8px 4px;
+  color: var(--text-3);
+  font-size: 11px;
+}
 
 .checker {
   background-color: #fff;

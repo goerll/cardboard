@@ -427,7 +427,8 @@ pub fn nodes_html(doc: &Document, nodes: Vec<&Node>, editor: bool) -> String {
         .into_iter()
         .map(|n| node_html(n, editor))
         .collect::<String>();
+    let fonts = crate::fonts::css(&doc.fonts);
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src https: http: data: file:; style-src 'unsafe-inline'; font-src https: data: file:; script-src 'none'; base-uri 'none'; form-action 'none'\"><style>:root{{{tokens}}}*{{box-sizing:border-box}}body{{margin:0}}button,input{{font:inherit}}</style></head><body>{body}</body></html>"
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src https: http: data: file:; style-src 'unsafe-inline'; font-src https: data: file:; script-src 'none'; base-uri 'none'; form-action 'none'\"><style>{fonts}:root{{{tokens}}}*{{box-sizing:border-box}}body{{margin:0}}button,input{{font:inherit}}</style></head><body>{body}</body></html>"
     )
 }

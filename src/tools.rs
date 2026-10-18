@@ -530,6 +530,7 @@ pub const MUTATIONS: &[&str] = &[
     "select_nodes",
     "set_active_page",
     "insert_icon",
+    "remove_font",
 ];
 
 pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
@@ -543,6 +544,8 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
     match name {
         "search_images" => return stock::search(args, store.unsplash_key().as_deref()),
         "import_image" => return import_image(store, args),
+        "add_font" => return add_font(store, args),
+        "list_fonts" => return list_fonts(store, args),
         "get_guide" => {
             return match string(args, "topic")? {
                 "cardboard-design" => Ok(json!({"guide":GUIDE})),
@@ -1378,6 +1381,15 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             let result = mutate(doc, "write_html", &write)?;
             Ok(json!({"nodeId":result["nodeIds"][0]}))
         }
+        "remove_font" => {
+            let family = string(args, "family")?;
+            let before = doc.fonts.len();
+            doc.fonts.retain(|f| f.family != family);
+            if doc.fonts.len() == before {
+                return Err(format!("This file has no font family {family:?}"));
+            }
+            Ok(json!({"removed":family}))
+        }
         _ => Err(format!("Unknown tool: {name}")),
     }
 }
@@ -1784,10 +1796,31 @@ pub fn definitions() -> Vec<Value> {
         vec!["icon", "targetNodeId", "fileId"],
         false,
     );
+    add(
+        "add_font",
+        "Add a font family to the file so the canvas and exports render it on any machine. By default downloads it from Google Fonts by family name (weights default [\"400\",\"700\"]; italic adds italics; subsets default [\"latin\",\"latin-ext\"], or [\"all\"]). With path or dataUri, adds one local WOFF2/WOFF/TTF/OTF file as the given weight and style. Then use font-family: \"Family\", fallback.",
+        json!({"family":s,"weights":{"type":"array","items":{"type":["string","integer"]}},"italic":{"type":"boolean"},"subsets":ids,"path":s,"dataUri":s,"weight":{"type":["string","integer"]},"style":{"type":"string","enum":["normal","italic"]}}),
+        vec!["family", "fileId"],
+        false,
+    );
+    add(
+        "remove_font",
+        "Remove a font family added with add_font from the file. Layers using it fall back to their next font.",
+        json!({"family":s}),
+        vec!["family", "fileId"],
+        false,
+    );
+    add(
+        "list_fonts",
+        "List the file's own fonts (from add_font), generic CSS families, and the font families installed on this machine (optionally filtered by query). Installed fonts render only here; add_font makes a font travel with the file.",
+        json!({"query":s}),
+        vec![],
+        true,
+    );
     for tool in &mut tools {
         if matches!(
             tool["name"].as_str(),
-            Some("import_image" | "search_images")
+            Some("import_image" | "search_images" | "add_font")
         ) {
             tool["annotations"]["openWorldHint"] = json!(true);
         }
@@ -1819,6 +1852,10 @@ pub fn context(store: &Store, args: &Value) -> Context {
 pub fn needs_network(name: &str, args: &Value) -> bool {
     match name {
         "import_image" => args.get("url").is_some() || args.get("stockId").is_some(),
+        // Without a local file or prepared faces, add_font downloads from Google Fonts.
+        "add_font" => ["path", "dataUri", "faces"]
+            .iter()
+            .all(|k| args.get(*k).is_none()),
         _ => false,
     }
 }
@@ -1855,7 +1892,102 @@ pub fn prepare(name: &str, args: &Value, ctx: &Context) -> Result<Value> {
             };
         }
     }
+    if name == "add_font" {
+        let family = string(args, "family")?;
+        let list = |key: &str, default: &[&str]| -> Result<Vec<String>> {
+            match args.get(key) {
+                None => Ok(default.iter().map(|s| s.to_string()).collect()),
+                Some(Value::Array(items)) => items.iter().map(css_value).collect(),
+                Some(_) => Err(format!("{key} must be an array")),
+            }
+        };
+        let faces = crate::fonts::google(
+            &store_dir()?,
+            family,
+            &list("weights", &["400", "700"])?,
+            bool_arg(args, "italic"),
+            &list("subsets", &["latin", "latin-ext"])?,
+        )?;
+        for key in ["weights", "italic", "subsets"] {
+            obj.remove(key);
+        }
+        obj.insert("faces".into(), json!(faces));
+    }
     Ok(out)
+}
+
+fn add_font(store: &mut Store, args: &Value) -> Result<Value> {
+    use crate::fonts::{self, FontFace};
+    let id = store.file_id(args)?;
+    let family = string(args, "family")?.trim().to_string();
+    fonts::validate_family(&family)?;
+    let dir = store
+        .assets_for(&id)
+        .ok_or("This session has no asset store; open a file saved in a library")?;
+    let faces: Vec<FontFace> = match args.get("faces") {
+        Some(faces) => serde_json::from_value(faces.clone()).map_err(|e| format!("faces: {e}"))?,
+        None => {
+            let name = assets::put(&dir, &assets::load(args)?)?;
+            if !assets::is_font(name.rsplit('.').next().unwrap_or("")) {
+                return Err("That file is an image, not a font (WOFF2, WOFF, TTF or OTF)".into());
+            }
+            vec![FontFace {
+                family: family.clone(),
+                src: assets::reference(&name),
+                weight: args.get("weight").map_or(Ok("400".into()), css_value)?,
+                style: args
+                    .get("style")
+                    .and_then(Value::as_str)
+                    .unwrap_or("normal")
+                    .into(),
+                unicode_range: None,
+                source: Some("file".into()),
+            }]
+        }
+    };
+    for face in &faces {
+        let stored = assets::ref_name(&face.src).and_then(|n| assets::path(&dir, n));
+        if face.family != family || !stored.is_some_and(|p| p.exists()) {
+            return Err("Each face must belong to the family and point at a stored font".into());
+        }
+    }
+    let count = faces.len();
+    store.transaction(&id, |doc| {
+        fonts::merge(&mut doc.fonts, faces);
+        Ok(())
+    })?;
+    let doc = store.file(&id)?;
+    Ok(json!({
+        "family": family, "faces": count,
+        "fonts": fonts::summary(&doc.fonts),
+        "usage": format!("font-family: \"{family}\", system-ui, sans-serif"),
+        "fileId": id, "revision": doc.revision,
+    }))
+}
+
+fn list_fonts(store: &Store, args: &Value) -> Result<Value> {
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_lowercase();
+    let file = match args.get("fileId") {
+        Some(_) => Some(store.file_id(args)?),
+        None => store.active_file.clone(),
+    };
+    let document = file
+        .and_then(|id| store.file(&id).ok())
+        .map(|doc| crate::fonts::summary(&doc.fonts))
+        .unwrap_or_default();
+    let installed: Vec<&String> = crate::fonts::installed()
+        .iter()
+        .filter(|f| f.to_lowercase().contains(&query))
+        .collect();
+    Ok(json!({
+        "document": document,
+        "installed": installed,
+        "generic": ["system-ui", "ui-sans-serif", "ui-serif", "ui-monospace", "ui-rounded", "sans-serif", "serif", "monospace"],
+    }))
 }
 
 fn import_image(store: &mut Store, args: &Value) -> Result<Value> {

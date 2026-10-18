@@ -88,6 +88,9 @@ pub struct Document {
     pub tokens: BTreeMap<String, String>,
     #[serde(default)]
     pub selection: Vec<String>,
+    /// `@font-face` declarations for fonts kept in the asset store.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fonts: Vec<crate::fonts::FontFace>,
 }
 
 impl Document {
@@ -106,6 +109,7 @@ impl Document {
             }],
             tokens: BTreeMap::new(),
             selection: vec![],
+            fonts: vec![],
         }
     }
     pub fn allocate(&mut self) -> String {
@@ -239,6 +243,9 @@ impl Document {
         for (name, value) in &self.tokens {
             crate::html::validate_token(name, value)?;
         }
+        for face in &self.fonts {
+            crate::fonts::validate(face)?;
+        }
         Ok(())
     }
     pub fn info(&self) -> Value {
@@ -246,6 +253,6 @@ impl Document {
             "pageId": self.active_page, "pages": self.pages.iter().map(|p| json!({"id":p.id,"name":p.name,"isActive":p.id==self.active_page})).collect::<Vec<_>>(),
             "nodeCount": self.pages.iter().flat_map(|p| &p.artboards).map(Node::count).sum::<usize>(),
             "artboards": self.pages.iter().flat_map(|p| p.artboards.iter().map(move |n| json!({"id":n.id,"name":n.name,"pageId":p.id,"width":n.styles.get("width"),"height":n.styles.get("height")}))).collect::<Vec<_>>(),
-            "tokens": self.tokens})
+            "tokens": self.tokens, "fonts": crate::fonts::summary(&self.fonts)})
     }
 }

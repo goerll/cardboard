@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlignCenterHorizontal,
   ArrowDown,
@@ -28,7 +28,7 @@ import { boxSides, formatGradient, formatShadows, num, parseColor, parseGradient
 import { Checkbox, IconButton, NumberField, Popover, Section, Segmented, Select, Slider, TextField } from '../ui/controls';
 import { ColorRow } from '../ui/ColorPicker';
 import { edit, engineRef, preview, setEditor, setStyles, toast, useEditor } from './store';
-import { call } from '../api';
+import { call, request } from '../api';
 
 const I = 13;
 
@@ -455,7 +455,70 @@ function PaddingOnly({ node, set }: SectionProps) {
   );
 }
 
-const FONTS = ['Inter', 'system-ui', 'Arial', 'Helvetica', 'Georgia', 'Times New Roman', 'Courier New', 'ui-monospace', 'ui-serif', 'ui-sans-serif'];
+const GENERIC_FONTS = ['system-ui', 'ui-sans-serif', 'ui-serif', 'ui-monospace', 'sans-serif', 'serif', 'monospace'];
+/** Installed font families, asked of the server once per session. */
+let installedFonts: Promise<string[]> | null = null;
+function useInstalledFonts(active: boolean) {
+  const [fonts, setFonts] = useState<string[]>([]);
+  useEffect(() => {
+    if (!active) return;
+    installedFonts ??= request<{ installed: string[] }>('list_fonts', {}).then((r) => r.installed, () => []);
+    let live = true;
+    installedFonts.then((f) => live && setFonts(f));
+    return () => {
+      live = false;
+    };
+  }, [active]);
+  return fonts;
+}
+
+function FontMenu({ doc, family, display, onPick, onClose, anchor }: { doc: CardboardDocument; family: string; display: string; onPick: (v: string) => void; onClose: () => void; anchor: HTMLElement | null }) {
+  const [filter, setFilter] = useState('');
+  const installed = useInstalledFonts(true);
+  const q = filter.trim().toLowerCase();
+  const match = (f: string) => !q || f.toLowerCase().includes(q);
+  const own = [...new Set((doc.fonts ?? []).map((f) => f.family))].filter(match);
+  const generic = GENERIC_FONTS.filter(match);
+  const local = installed.filter((f) => match(f) && !own.includes(f)).slice(0, 300);
+  const pick = (f: string) => onPick(/^[a-z-]+$/.test(f) ? f : `"${f}"`);
+  const item = (f: string) => (
+    <button key={f} type="button" className="menu-item" style={{ fontFamily: `"${f}", ${f}` }} onClick={() => pick(f)}>
+      <span className="menu-check">{display === f && <Check size={12} />}</span>
+      {f}
+    </button>
+  );
+  const group = (title: string, fonts: string[]) =>
+    fonts.length > 0 && (
+      <>
+        <div className="menu-group">{title}</div>
+        {fonts.map(item)}
+      </>
+    );
+  return (
+    <Popover anchor={anchor} onClose={onClose} className="menu font-menu" width={260}>
+      <div className="menu-input">
+        <label className="field">
+          <input
+            value={filter}
+            placeholder={family || 'Search or type a family'}
+            spellCheck={false}
+            autoFocus
+            onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && filter.trim()) onPick(filter.trim());
+              if (e.key === 'Escape') onClose();
+            }}
+          />
+        </label>
+      </div>
+      <div className="font-list">
+        {group('In this file', own)}
+        {group('Generic', generic)}
+        {group('Installed on this computer', local)}
+      </div>
+    </Popover>
+  );
+}
 const WEIGHTS = [
   ['100', 'Thin'],
   ['200', 'Extra Light'],
@@ -487,19 +550,7 @@ function TypographySection({ doc, node, comp, set, pv, pvEnd }: SectionProps & {
         </span>
         <ChevronDown size={12} className="select-chevron" />
       </button>
-      {fontOpen && (
-        <Popover anchor={fref.current} onClose={() => setFontOpen(false)} className="menu" width={240}>
-          <div className="menu-input">
-            <TextField value={family} placeholder="Font family" autoFocus onCommit={(v) => (set({ 'font-family': v }), setFontOpen(false))} />
-          </div>
-          {FONTS.map((f) => (
-            <button key={f} type="button" className="menu-item" style={{ fontFamily: f }} onClick={() => (set({ 'font-family': f.includes(' ') ? `"${f}"` : f }), setFontOpen(false))}>
-              <span className="menu-check">{display === f && <Check size={12} />}</span>
-              {f}
-            </button>
-          ))}
-        </Popover>
-      )}
+      {fontOpen && <FontMenu doc={doc} family={family} display={display} anchor={fref.current} onClose={() => setFontOpen(false)} onPick={(v) => (set({ 'font-family': v }), setFontOpen(false))} />}
       <div className="grid2">
         <Select
           value={String(weight) as (typeof WEIGHTS)[number][0]}

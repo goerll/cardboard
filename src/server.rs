@@ -182,7 +182,7 @@ async fn asset(State(app): State<App>, Path(name): Path<String>) -> Response {
         };
         if let Ok(Ok(bytes)) = tokio::task::spawn_blocking(move || std::fs::read(path)).await {
             let ext = name.rsplit('.').next().unwrap_or("");
-            return (
+            let mut response = (
                 [
                     (header::CONTENT_TYPE, crate::assets::mime(ext)),
                     (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
@@ -195,6 +195,14 @@ async fn asset(State(app): State<App>, Path(name): Path<String>) -> Response {
                 bytes,
             )
                 .into_response();
+            // Fonts load with CORS, and dashboard thumbnails render from an opaque origin.
+            if crate::assets::is_font(ext) {
+                response.headers_mut().insert(
+                    header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                    header::HeaderValue::from_static("*"),
+                );
+            }
+            return response;
         }
     }
     StatusCode::NOT_FOUND.into_response()

@@ -80,7 +80,15 @@ undo step). Memory-only sessions have no store and keep data URLs.
 (`assets: "files"`); both are allowed by the export's CSP (`img-src`/`font-src` include `data:`
 and `file:`).
 
-Network: `import_image {url | stockId}` and `search_images` download in `Hub::call` before taking
+Fonts: `Document.fonts` (serde default, skipped when empty) is a list of
+`{family, src, weight, style, unicodeRange?, source?}` where `src` is an asset reference. The
+canvas iframe and the editor page get matching `@font-face` rules (so the font menu previews
+them), dashboard thumbnails too (font assets are served with `Access-Control-Allow-Origin: *`
+because those iframes have an opaque origin), and `export_html` emits them with the files inlined.
+Installed families come from parsing the `name` table of TrueType/OpenType files in the system
+font folders, once per process.
+
+Network: `import_image {url | stockId}`, `add_font` (Google Fonts) and `search_images` download in `Hub::call` before taking
 the store lock (`tools::prepare`), then run against local assets. MCP tool calls run on a blocking
 thread. Rendering never fetches anything except hotlinked Unsplash photos, which their API terms
 require.

@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod doctor;
 pub mod document;
+pub mod fonts;
 pub mod html;
 pub mod hub;
 pub mod icons;

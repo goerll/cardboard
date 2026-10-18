@@ -79,6 +79,10 @@ impl Hub {
             let ctx = tools::context(&self.lock(), args);
             prepared = tools::prepare(name, args, &ctx)?;
             &prepared
+        } else if name == "list_fonts" {
+            // The first scan of system font folders takes a moment; do it unlocked.
+            crate::fonts::installed();
+            args
         } else if name == "search_images" {
             let key = self.lock().unsplash_key();
             return crate::stock::search(args, key.as_deref());

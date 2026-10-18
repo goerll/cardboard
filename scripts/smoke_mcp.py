@@ -73,7 +73,7 @@ def main():
         client = Client(binary, document)
         try:
             tools = client.request("tools/list", {})["tools"]
-            assert len(tools) == 54, len(tools)
+            assert len(tools) == 57, len(tools)
             guide = client.value("get_guide", {"topic": "cardboard-design"})
             assert guide["guide"]
             file_id = client.value("list_resources", {})["resources"][0]["id"]
@@ -126,7 +126,7 @@ def main():
         finally:
             reopened.close()
     relay(binary)
-    print("MCP smoke passed: 54 tools, editing, search, image assets, recoverable errors, export, restart persistence")
+    print("MCP smoke passed: 57 tools, editing, search, image assets, recoverable errors, export, restart persistence")
 
 
 def relay(binary):

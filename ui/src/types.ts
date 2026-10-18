@@ -24,6 +24,16 @@ export interface Page {
   background?: string;
 }
 
+/** One @font-face whose file lives in the asset store (src is `/asset/<sha256>.<ext>`). */
+export interface FontFace {
+  family: string;
+  src: string;
+  weight: string;
+  style: string;
+  unicodeRange?: string;
+  source?: string;
+}
+
 export interface CardboardDocument {
   id: string;
   name: string;
@@ -33,6 +43,7 @@ export interface CardboardDocument {
   pages: Page[];
   tokens: Record<string, string>;
   selection: string[];
+  fonts?: FontFace[];
 }
 
 export interface Tab {
@@ -50,6 +61,7 @@ export interface LibraryFile {
   modified: number;
   opened: number | null;
   tokens: Record<string, string>;
+  fonts?: FontFace[];
   background?: string | null;
   artboards: { id: string; name: string; x: number; y: number; w: number; h: number; html: string }[];
 }

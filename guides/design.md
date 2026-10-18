@@ -85,9 +85,11 @@ type, not three tints of the same layout.
 - Avoid text at 12px or below except in dense tools or deliberate all-caps labels.
 - Font sizes in px. Line height in px or a unitless ratio that doesn't produce fractional
   pixels. Letter-spacing in em when starting fresh; follow the file if it already uses px.
-- Stick to fonts the file already uses. If you introduce a family, prefer widely available ones
-  or common system stacks (`system-ui`, `Inter`, `Georgia`, `ui-monospace`) and always give a
-  fallback, because Cardboard renders with whatever the person's machine has.
+- Stick to fonts the file already uses (`get_basic_info` lists the file's own fonts). To
+  introduce a family, add it to the file with `add_font` (any Google Fonts family by name, or a
+  local font file); it then renders the same on every machine and in exports. Ask for just the
+  weights you use. Fonts that are only installed on this computer (`list_fonts`) won't travel
+  with the file. Always give a fallback: `font-family: "Space Grotesk", system-ui, sans-serif`.
 
 ## 5. Build in small steps
 

@@ -1,3 +1,17 @@
+import type { FontFace } from '../types';
+
+/** @font-face rules for document fonts; mirrors fonts::css in src/fonts.rs. */
+export function fontFaceCss(fonts: FontFace[] | undefined): string {
+  const formats: Record<string, string> = { woff2: 'woff2', woff: 'woff', otf: 'opentype' };
+  return (fonts ?? [])
+    .map((f) => {
+      const format = formats[f.src.split('.').pop() ?? ''] ?? 'truetype';
+      const range = f.unicodeRange ? `;unicode-range:${f.unicodeRange}` : '';
+      return `@font-face{font-family:"${f.family}";src:url("${f.src}") format("${format}");font-weight:${f.weight};font-style:${f.style};font-display:swap${range}}`;
+    })
+    .join('');
+}
+
 export interface RGBA {
   r: number;
   g: number;

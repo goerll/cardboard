@@ -187,8 +187,11 @@ fn each_value(doc: &mut Document, f: &mut impl FnMut(&mut String)) {
         visit(n, f);
     }
     doc.tokens.values_mut().for_each(&mut *f);
+    for face in &mut doc.fonts {
+        f(&mut face.src);
+    }
 }
-/// Assets a document refers to, from attributes, styles and tokens.
+/// Assets a document refers to, from attributes, styles, tokens and fonts.
 pub fn references(doc: &Document) -> BTreeSet<String> {
     fn visit(n: &Node, out: &mut BTreeSet<String>) {
         for v in n.attributes.values().chain(n.styles.values()) {
@@ -202,7 +205,7 @@ pub fn references(doc: &Document) -> BTreeSet<String> {
     for n in doc.pages.iter().flat_map(|p| &p.artboards) {
         visit(n, &mut out);
     }
-    for v in doc.tokens.values() {
+    for v in doc.tokens.values().chain(doc.fonts.iter().map(|f| &f.src)) {
         names_in(v, &mut out);
     }
     out

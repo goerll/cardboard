@@ -28,6 +28,7 @@ Control lines (`{"cardboard":"status"}`, `{"cardboard":"handover"}`) sent as the
 | Tokens | `get_tokens`, `create_tokens`, `set_tokens` |
 | Icons | `search_icons`, `insert_icon` |
 | Images | `import_image`, `search_images` |
+| Fonts | `add_font`, `remove_font`, `list_fonts` |
 | Export | `get_jsx`, `export_html` |
 | See and measure | `screenshot`, `get_bounds` |
 | Session and history | `start_working_on_nodes`, `finish_working_on_nodes`, `undo`, `redo` |
@@ -152,9 +153,10 @@ that canonical form fail validation.
 - Multi-agent claims: editing a layer claims it for that agent, as does `start_working_on_nodes`; `write_html` into a container claims only the new layers. While claimed, other agents get a tool error if they edit the layer or anything inside it, or delete, replace or move a layer containing it (including deleting its page). Edits targeted by `query` are checked against the layers the query matches, and claim them. Claims expire 2 minutes after the agent's last edit in the file and are released by `finish_working_on_nodes` (given layers and their descendants, or all of the agent's layers when `nodeIds` is omitted). The editor shows claimed layers with the agent's name. The person in the editor is never blocked.
 - Images live in a content-addressed asset store and are referenced as `/asset/<sha256>.<ext>`. `import_image` stores one from `url`, `path`, `dataUri` or a `search_images` `stockId` and returns that `src`; with `parentId` it also inserts a sized `<img>`. Base64 `data:image/...` values written by any tool are moved into the store as part of the same edit. `export_html` inlines stored assets as data URIs by default (`assets: "files"` links them as `file://` URLs instead).
 - `search_images` uses Unsplash when `UNSPLASH_ACCESS_KEY` (or the library setting `unsplashAccessKey`) is set and Openverse otherwise. Unsplash photos stay hotlinked and the download endpoint is called when one is placed, per Unsplash's API guidelines; Openverse photos are stored locally. Both keep attribution in `alt`/`data-attribution`.
-- Network tools (`import_image` with `url` or `stockId`, `search_images`) download before taking the editor lock and fail with a clear message offline. Nothing downloads while rendering.
+- `add_font` downloads a Google Fonts family (WOFF2, latin and latin-ext subsets by default) or takes a local `path`/`dataUri` font file into the asset store and records `@font-face` rules in `Document.fonts`; the canvas, dashboard thumbnails and `export_html` all load them, so the font renders on any machine. `get_basic_info` lists document fonts; `list_fonts` adds generic families and the families installed on this machine. `remove_font` is undoable; `add_font` is too but cannot run inside `batch`.
+- Network tools (`import_image` with `url` or `stockId`, `search_images`, `add_font` from Google Fonts) download before taking the editor lock and fail with a clear message offline. Nothing downloads while rendering.
 - Failures are MCP tool results with `isError`, preserving the connection so agents can inspect and retry. Protocol/schema errors remain protocol errors.
 
 ## Parity roadmap
 
-Current tools cover the document core plus screenshots and measured bounds. Font discovery and additional manipulation modes are still to come. Do not advertise unsupported tools with fabricated responses.
+Current tools cover the document core plus screenshots, measured bounds, icons, images and fonts. Raster export and additional manipulation modes are still to come. Do not advertise unsupported tools with fabricated responses.

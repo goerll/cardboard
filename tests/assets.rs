@@ -278,3 +278,119 @@ fn stock_results_keep_attribution() {
         assert!(error.contains("UNSPLASH_ACCESS_KEY"), "{error}");
     }
 }
+
+/// The start of a TrueType file, enough to be recognized as a font.
+fn ttf(salt: u8) -> Vec<u8> {
+    let mut b = b"\0\x01\0\0\0\0\0\0\0\0\0\0".to_vec();
+    b.push(salt);
+    b
+}
+
+#[test]
+fn local_fonts_become_document_font_faces() {
+    let (dir, mut s, file, _) = library_with_file("fonts");
+    let regular = dir.join("Brand-Regular.ttf");
+    let bold = dir.join("Brand-Bold.ttf");
+    std::fs::write(&regular, ttf(1)).unwrap();
+    std::fs::write(&bold, ttf(2)).unwrap();
+    edit(
+        &mut s,
+        "add_font",
+        json!({"fileId":file,"family":"Brand Sans","path":regular.to_string_lossy()}),
+    );
+    let added = edit(
+        &mut s,
+        "add_font",
+        json!({"fileId":file,"family":"Brand Sans","path":bold.to_string_lossy(),"weight":700}),
+    );
+    assert_eq!(
+        added["fonts"],
+        json!([{"family":"Brand Sans","weights":["400","700"],"styles":["normal"],"source":"file"}])
+    );
+    let info = edit(&mut s, "get_basic_info", json!({"fileId":file}));
+    assert_eq!(info["fonts"][0]["family"], "Brand Sans");
+    let listed = edit(
+        &mut s,
+        "list_fonts",
+        json!({"fileId":file,"query":"zzzz-no-such-font"}),
+    );
+    assert_eq!(listed["document"][0]["family"], "Brand Sans");
+    assert_eq!(listed["installed"], json!([]));
+
+    // Re-adding a weight replaces it instead of duplicating.
+    edit(
+        &mut s,
+        "add_font",
+        json!({"fileId":file,"family":"Brand Sans","path":bold.to_string_lossy(),"weight":"700"}),
+    );
+    assert_eq!(s.file(&file).unwrap().fonts.len(), 2);
+
+    // Export carries @font-face with the font inlined, so it renders anywhere.
+    let html = edit(&mut s, "export_html", json!({"fileId":file}))["html"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(html.contains("@font-face{font-family:\"Brand Sans\";src:url(\"data:font/ttf;base64,"));
+    assert!(html.contains("font-weight:700"));
+
+    // Fonts travel inside the saved file like images.
+    s.flush().unwrap();
+    let raw: Value =
+        serde_json::from_slice(&std::fs::read(s.path_of(&file).unwrap()).unwrap()).unwrap();
+    assert_eq!(raw["assets"].as_object().unwrap().len(), 2);
+
+    // Images are not fonts, bad names are rejected, removal is undoable.
+    let png_path = dir.join("x.png");
+    std::fs::write(&png_path, png(1, 1, 9)).unwrap();
+    assert!(
+        tools::call(
+            &mut s,
+            "add_font",
+            &json!({"fileId":file,"family":"X","path":png_path.to_string_lossy()})
+        )
+        .is_err()
+    );
+    assert!(
+        tools::call(
+            &mut s,
+            "add_font",
+            &json!({"fileId":file,"family":"Bad\"}","path":bold.to_string_lossy()})
+        )
+        .is_err()
+    );
+    edit(
+        &mut s,
+        "remove_font",
+        json!({"fileId":file,"family":"Brand Sans"}),
+    );
+    assert!(s.file(&file).unwrap().fonts.is_empty());
+    edit(&mut s, "undo", json!({"fileId":file}));
+    assert_eq!(s.file(&file).unwrap().fonts.len(), 2);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn google_fonts_requests_and_stylesheets_parse() {
+    use cardboard::fonts;
+    assert_eq!(
+        fonts::google_url("Space Grotesk", &["700".into(), "400".into()], false).unwrap(),
+        "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;700&display=swap"
+    );
+    assert_eq!(
+        fonts::google_url("Inter", &["400".into()], true).unwrap(),
+        "https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;1,400&display=swap"
+    );
+    assert!(fonts::google_url("Inter", &["heavy".into()], false).is_err());
+    let css = "/* cyrillic */\n@font-face {\n  font-family: 'Inter';\n  font-style: normal;\n  font-weight: 400;\n  src: url(https://fonts.gstatic.com/a.woff2) format('woff2');\n  unicode-range: U+0400-045F;\n}\n/* latin */\n@font-face {\n  font-family: 'Inter';\n  font-style: italic;\n  font-weight: 700;\n  src: url(https://fonts.gstatic.com/b.woff2) format('woff2');\n  unicode-range: U+0000-00FF, U+0131;\n}\n";
+    let latin = fonts::parse_google_css(css, &["latin".into()]);
+    assert_eq!(
+        latin,
+        vec![(
+            "700".to_string(),
+            "italic".to_string(),
+            Some("U+0000-00FF, U+0131".to_string()),
+            "https://fonts.gstatic.com/b.woff2".to_string()
+        )]
+    );
+    assert_eq!(fonts::parse_google_css(css, &["all".into()]).len(), 2);
+}
