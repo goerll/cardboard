@@ -399,6 +399,9 @@ pub fn node_html(node: &Node, editor: bool) -> String {
         return out;
     }
     out.push_str(&escape(&node.text));
+    if let Some(markup) = &node.markup {
+        out.push_str(markup);
+    }
     for child in &node.children {
         out.push_str(&node_html(child, editor));
     }

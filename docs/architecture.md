@@ -129,6 +129,11 @@ Changed existing tools:
 
 `Page.background: Option<String>` (serde default, skipped when None) holds the canvas color.
 
+`Node.markup: Option<String>` (serde default, skipped when None) holds the sanitized inner SVG of
+an icon layer (`src/icons.rs`): the node is an `<svg>` with no children or text, and renderers
+(`html::node_html`, `get_jsx`, the canvas engine) emit the markup as its content. See the Icons
+section of `docs/mcp.md`.
+
 ## Rust API for hosts (desktop)
 
 ```rust

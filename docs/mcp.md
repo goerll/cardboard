@@ -26,6 +26,7 @@ Control lines (`{"cardboard":"status"}`, `{"cardboard":"handover"}`) sent as the
 | Pages and artboards | `create_page`, `rename_pages`, `create_artboard` |
 | Edit nodes | `write_html`, `update_styles`, `set_text_content`, `rename_nodes`, `delete_nodes`, `duplicate_nodes`, `move_nodes` |
 | Tokens | `get_tokens`, `create_tokens`, `set_tokens` |
+| Icons | `search_icons`, `insert_icon` |
 | Export | `get_jsx`, `export_html` |
 | See and measure | `screenshot`, `get_bounds` |
 | Session and history | `start_working_on_nodes`, `finish_working_on_nodes`, `undo`, `redo` |
@@ -108,6 +109,33 @@ Reads stay small by default so they fit an agent's context. `maxChars` sets the 
 - `list_files` returns file and artboard metadata; per-artboard preview HTML only with `previews: true`.
 
 Node ids may be given bare: `581` and `"581"` mean `node-581` (and `pageId: 2` means `page-2`) anywhere a tool takes an id.
+
+## Icons
+
+Icons come from [Iconify](https://iconify.design) (Lucide, Phosphor `ph`, Tabler, Heroicons,
+Material Symbols and ~200 more sets), named `set:name`.
+
+- `search_icons {query, sets?, limit?}` returns `{icons:["lucide:arrow-right", ...], total, source}`.
+  Offline it lists matching icons from the local cache (`source: "cache"`) or fails with a clear
+  error.
+- `insert_icon {fileId, icon, targetNodeId, mode?, index?, size?, strokeWidth?, color?, name?}`
+  places one icon like `write_html` (default `insert-children`) and returns `{nodeId}`.
+- In `write_html`, `<icon name="lucide:arrow-right" size="16" stroke-width="1.5" color="var(--accent)" />`
+  does the same inline; `style`, `layer-name`, `hidden` and ordinary attributes apply too.
+
+An icon is ONE layer: an `<svg>` node with `viewBox`, `data-icon="set:name"`, `aria-hidden`,
+`width`/`height`/`flex-shrink:0` styles, and its inner SVG stored in `Node.markup`. Color defaults
+to `currentColor`, so `update_styles` `color` recolors it. `export_html` and `get_jsx` emit the
+full SVG (JSX with React attribute names), and an exported `<svg data-icon>` pasted back into
+`write_html` becomes one icon layer again.
+
+Fetched icons are cached on disk (`$CARDBOARD_ICON_CACHE`, else the platform cache directory
+under `cardboard/icons`), so repeat use and offline work need no network. Downloads happen
+before the edit takes the document lock and never during rendering. Uncached icons fail with an
+error instead of inserting anything. Icon markup is parsed into an allowlist of SVG shape
+elements and attributes and re-serialized: scripts, `foreignObject`, animation, event handlers,
+text, and any non-local `href` or `url()` are rejected. Documents whose stored markup is not in
+that canonical form fail validation.
 
 ## Guarantees and limits
 

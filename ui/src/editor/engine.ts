@@ -263,13 +263,16 @@ export class CanvasEngine {
       this.applyAttributes(el, node, undefined);
       this.applyStyles(el, node);
       this.applyText(el, node);
+      if (node.markup != null) el.innerHTML = node.markup;
     } else {
       if (!shallowEqual(prev.attributes, node.attributes)) this.applyAttributes(el, node, prev);
       if (this.previewed.has(node.id) || prev.visible !== node.visible || !shallowEqual(prev.styles, node.styles)) this.applyStyles(el, node);
       if (prev.text !== node.text) this.applyText(el, node);
+      if (prev.markup !== node.markup) el.innerHTML = node.markup ?? '';
     }
     this.prev.set(node.id, node);
-    if (!VOID_TAGS.has(node.tag)) {
+    // Icon markup is server-sanitized SVG and has no child layers of its own.
+    if (!VOID_TAGS.has(node.tag) && node.markup == null) {
       let i = 0;
       for (const child of node.children) {
         const c = this.syncNode(child, svg);

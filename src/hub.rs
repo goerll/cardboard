@@ -68,6 +68,11 @@ impl Hub {
             };
             return job.run();
         }
+        // Network work happens before taking the lock so the editor never waits on Iconify.
+        if name == "search_icons" {
+            return crate::icons::search(args);
+        }
+        crate::icons::prefetch(name, args)?;
         let (result, generation) = {
             let mut store = self.lock();
             if self.is_retired() {

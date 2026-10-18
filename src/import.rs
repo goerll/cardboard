@@ -17,6 +17,31 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Icon names (`<icon name="...">`) in an HTML fragment, read the way the importer reads them, so
+/// they can be downloaded before the import runs.
+pub fn icon_names(html: &str) -> Vec<String> {
+    struct Names(RefCell<Vec<String>>);
+    impl TokenSink for Names {
+        type Handle = ();
+        fn process_token(&self, token: Token, _: u64) -> TokenSinkResult<()> {
+            if let TagToken(tag) = token
+                && tag.kind == StartTag
+                && &*tag.name == "icon"
+                && let Some(name) = tag.attrs.iter().find(|a| &*a.name.local == "name")
+            {
+                self.0.borrow_mut().push(name.value.to_string());
+            }
+            TokenSinkResult::Continue
+        }
+    }
+    let tokenizer = Tokenizer::new(Names(RefCell::new(vec![])), TokenizerOpts::default());
+    let input = BufferQueue::default();
+    input.push_back(StrTendril::from_slice(html));
+    while !matches!(tokenizer.feed(&input), TokenizerResult::Done) {}
+    tokenizer.end();
+    tokenizer.sink.0.take()
+}
+
 /// Inline imports go through the chat; file imports (`path`) may be larger.
 pub const INLINE_LIMIT: usize = 1024 * 1024;
 pub const FILE_LIMIT: usize = 8 * 1024 * 1024;
@@ -398,6 +423,9 @@ impl Convert<'_> {
         };
         let svg = name.ns == ns!(svg);
         let original = name.local.to_string();
+        if !svg && original == "icon" {
+            return self.icon(id, attrs).map(Some);
+        }
         let tag = match policy(&original, svg)? {
             Policy::Keep => original.clone(),
             Policy::Map(tag) => {
@@ -445,6 +473,16 @@ impl Convert<'_> {
                 },
             }
         }
+        if svg && tag == "svg" && node.attributes.contains_key("data-icon") {
+            // An exported or copied icon layer comes back as one layer.
+            match crate::icons::sanitize(&self.markup(id)) {
+                Ok(markup) => {
+                    node.markup = Some(markup);
+                    return Ok(Some(node));
+                }
+                Err(e) => self.warn(format!("Icon markup was imported as plain SVG layers: {e}")),
+            }
+        }
         let mut children = vec![];
         for &child in &self.tree[id].children {
             self.child(child, Some(&tag), depth + 1, &mut children)?;
@@ -455,6 +493,91 @@ impl Convert<'_> {
             node.children = nodes(children);
         }
         Ok(Some(node))
+    }
+
+    /// `<icon name="lucide:arrow-right" size="20" stroke-width="1.5" color="..." />` becomes one
+    /// icon layer; `style`, `layer-name`, `hidden` and ordinary attributes apply on top.
+    fn icon(&mut self, id: usize, attrs: &[Attribute]) -> Result<Node> {
+        let has_content = self.tree[id]
+            .children
+            .iter()
+            .any(|&c| match &self.tree[c].data {
+                Data::Text(t) => !t.trim().is_empty(),
+                Data::Element(..) => true,
+                _ => false,
+            });
+        if has_content {
+            return Err(
+                "Write icons as <icon name=\"set:name\" />; they cannot contain content".into(),
+            );
+        }
+        let get = |key: &str| {
+            attrs
+                .iter()
+                .find(|a| &*a.name.local == key)
+                .map(|a| a.value.to_string())
+        };
+        let name = get("name").ok_or("<icon> needs name=\"set:name\", e.g. lucide:arrow-right")?;
+        let (size, stroke_width, color) = (get("size"), get("stroke-width"), get("color"));
+        let options = crate::icons::Options {
+            size: size.as_deref(),
+            stroke_width: stroke_width.as_deref(),
+            color: color.as_deref(),
+        };
+        let mut node = crate::icons::node(self.doc, &name, options)?;
+        for attr in attrs {
+            let (key, value) = (attr.name.local.to_string(), attr.value.to_string());
+            match key.as_str() {
+                "name" | "size" | "stroke-width" | "color" => {}
+                "style" => node.styles.extend(match parse_styles(&value) {
+                    Ok(styles) => styles,
+                    Err(_) => self.lenient_styles(&value),
+                }),
+                "layer-name" => node.name = value,
+                "hidden" => node.visible = false,
+                "data-cardboard-locked" => node.locked = true,
+                _ => match validate_attribute(&key, &value) {
+                    Ok(()) => {
+                        node.attributes.insert(key, value);
+                    }
+                    Err(e) if e.starts_with("Unsupported attribute") => {
+                        self.warn(format!("Unsupported attribute {key} was dropped"));
+                    }
+                    Err(e) => return Err(e),
+                },
+            }
+        }
+        Ok(node)
+    }
+
+    /// The inner markup of an element as XML, for the icon sanitizer to re-check.
+    fn markup(&self, id: usize) -> String {
+        let mut out = String::new();
+        for &child in &self.tree[id].children {
+            match &self.tree[child].data {
+                Data::Text(text) => out.push_str(&crate::html::escape(text)),
+                Data::Element(name, attrs) => {
+                    out.push('<');
+                    out.push_str(&name.local);
+                    for attr in attrs {
+                        match &attr.name.prefix {
+                            Some(p) if &**p == "xmlns" => continue,
+                            Some(p) if !p.is_empty() => {
+                                out.push_str(&format!(" {p}:{}", attr.name.local))
+                            }
+                            _ if &*attr.name.local == "xmlns" => continue,
+                            _ => out.push_str(&format!(" {}", attr.name.local)),
+                        }
+                        out.push_str(&format!("=\"{}\"", crate::html::escape(&attr.value)));
+                    }
+                    out.push('>');
+                    out.push_str(&self.markup(child));
+                    out.push_str(&format!("</{}>", name.local));
+                }
+                Data::Root | Data::Comment => {}
+            }
+        }
+        out
     }
 
     /// Keep the valid declarations of a style attribute that doesn't fully parse.

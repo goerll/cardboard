@@ -1762,3 +1762,39 @@ kbd {
 .shortcut kbd {
   color: var(--text-2);
 }
+
+/* icon picker */
+.icon-search {
+  display: flex;
+  gap: 8px;
+}
+.icon-search .field {
+  flex: 1;
+}
+.icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+  gap: 4px;
+  min-height: 120px;
+  max-height: 360px;
+  overflow: auto;
+}
+.icon-cell {
+  display: grid;
+  place-items: center;
+  height: 48px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.icon-cell:hover {
+  background: var(--field);
+}
+.icon-cell span {
+  width: 24px;
+  height: 24px;
+  background: currentColor;
+  mask: center / contain no-repeat;
+}

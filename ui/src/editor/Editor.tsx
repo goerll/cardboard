@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Code2, Frame, Hand, ImagePlus, MousePointer2, PanelLeft, Redo2, Square, Type, Undo2, X } from 'lucide-react';
+import { Code2, Frame, Hand, ImagePlus, MousePointer2, PanelLeft, Redo2, SmilePlus, Square, Type, Undo2, X } from 'lucide-react';
 import { call, getState, request, subscribe } from '../api';
 import type { CardboardDocument } from '../types';
 import { activePage, indexPage, isTextLeaf, nodeToHtml } from '../lib/tree';
@@ -7,7 +7,7 @@ import { CanvasEngine, type Tool } from './engine';
 import { copyHtml, Inspector, pickImage } from './Inspector';
 import { LeftPanel } from './LeftPanel';
 import { edit, editorState, engineRef, select, setEditor, toast, useEditor } from './store';
-import { Popover } from '../ui/controls';
+import { Popover, Select } from '../ui/controls';
 
 export function Editor({ fileId, doc, canUndo, canRedo }: { fileId: string; doc: CardboardDocument; canUndo: boolean; canRedo: boolean }) {
   const panels = useEditor((s) => s.panels);
@@ -20,6 +20,7 @@ export function Editor({ fileId, doc, canUndo, canRedo }: { fileId: string; doc:
       <ContextMenu doc={doc} />
       <ExportDialog doc={doc} />
       <InsertHtmlDialog doc={doc} />
+      <IconDialog />
       <ShortcutsDialog />
       <Shortcuts doc={doc} />
     </div>
@@ -56,6 +57,9 @@ function ToolRail({ canUndo, canRedo }: { canUndo: boolean; canRedo: boolean }) 
       {CREATE.map(btn)}
       <button type="button" className="rail-btn" title="Image (Shift Ctrl K)" onClick={insertImage}>
         <ImagePlus size={16} />
+      </button>
+      <button type="button" className="rail-btn" title="Icon" onClick={() => setEditor({ iconsOpen: true })}>
+        <SmilePlus size={16} />
       </button>
       <button type="button" className="rail-btn" title="Insert HTML" onClick={() => setEditor({ insertHtmlOpen: true })}>
         <Code2 size={16} />
@@ -518,6 +522,7 @@ function ContextMenu({ doc }: { doc: CardboardDocument }) {
               {item('Paste', 'Ctrl V', () => toast('Use Ctrl V to paste'))}
               {item('Zoom to fit', 'Shift 1', () => engineRef.current?.zoomToFit(false))}
               {item('Insert HTML…', '', () => setEditor({ insertHtmlOpen: true }))}
+              {item('Insert icon…', '', () => setEditor({ iconsOpen: true }))}
             </>
           )}
         </Popover>
@@ -604,6 +609,72 @@ function InsertHtmlDialog({ doc }: { doc: CardboardDocument }) {
         >
           Insert
         </button>
+      </footer>
+    </Dialog>
+  );
+}
+
+const ICON_SETS = [
+  { value: 'lucide', label: 'Lucide' },
+  { value: 'ph', label: 'Phosphor' },
+  { value: 'tabler', label: 'Tabler' },
+  { value: 'heroicons', label: 'Heroicons' },
+  { value: 'material-symbols', label: 'Material Symbols' },
+  { value: 'all', label: 'All sets' },
+];
+/** Search Iconify and insert the picked icon as one layer, next to or inside the selection. */
+function IconDialog() {
+  const open = useEditor((s) => s.iconsOpen);
+  const [query, setQuery] = useState('');
+  const [iconSet, setIconSet] = useState('lucide');
+  const [results, setResults] = useState<{ icons: string[]; note?: string } | null>(null);
+  useEffect(() => {
+    const q = query.trim();
+    if (!open || !q) return setResults(null);
+    let live = true;
+    const timer = setTimeout(() => {
+      request<{ icons: string[]; note?: string }>('search_icons', { query: q, limit: 96, ...(iconSet === 'all' ? {} : { sets: [iconSet] }) })
+        .then((r) => live && setResults(r))
+        .catch((e: Error) => live && setResults({ icons: [], note: e.message }));
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [open, query, iconSet]);
+  if (!open) return null;
+  const close = () => setEditor({ iconsOpen: false });
+  const status = results?.note ?? (results && !results.icons.length ? 'No icons found.' : insertionTarget() ? 'Inserts next to the selection as one layer.' : 'Nothing is selected, so a new frame will be created.');
+  return (
+    <Dialog title="Insert icon" onClose={close} wide>
+      <div className="icon-search">
+        <label className="field">
+          <input autoFocus value={query} placeholder="Search icons: arrow, settings, user…" spellCheck={false} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key !== 'Escape' && e.stopPropagation()} />
+        </label>
+        <Select value={iconSet} options={ICON_SETS} onChange={setIconSet} width={180} />
+      </div>
+      <div className="icon-grid">
+        {results?.icons.map((name) => {
+          const url = `url("https://api.iconify.design/${name.replace(':', '/')}.svg")`;
+          return (
+            <button
+              key={name}
+              type="button"
+              className="icon-cell"
+              title={name}
+              onClick={async () => {
+                close();
+                await insertHtmlAt(`<icon name="${name}" />`);
+              }}
+            >
+              <span style={{ maskImage: url, WebkitMaskImage: url }} />
+            </button>
+          );
+        })}
+      </div>
+      <footer>
+        <span className="muted small">{status}</span>
+        <span className="spacer" />
       </footer>
     </Dialog>
   );

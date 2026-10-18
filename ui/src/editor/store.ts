@@ -15,6 +15,7 @@ export interface EditorState {
   layoutTick: number;
   collapsed: Record<string, boolean>;
   insertHtmlOpen: boolean;
+  iconsOpen: boolean;
   exportOpen: boolean;
   shortcutsOpen: boolean;
 }
@@ -30,6 +31,7 @@ let state: EditorState = {
   layoutTick: 0,
   collapsed: {},
   insertHtmlOpen: false,
+  iconsOpen: false,
   exportOpen: false,
   shortcutsOpen: false,
 };

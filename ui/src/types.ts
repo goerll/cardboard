@@ -13,6 +13,8 @@ export interface DesignNode {
   visible: boolean;
   /** Canvas position, top-level artboards only. */
   position?: [number, number];
+  /** Sanitized inner SVG of an icon layer (an `<svg>` with no child nodes). */
+  markup?: string;
 }
 
 export interface Page {

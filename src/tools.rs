@@ -35,7 +35,11 @@ fn styles(v: &Value) -> Result<Styles> {
     Ok(result)
 }
 fn node_info(n: &Node) -> Value {
-    json!({"id":n.id,"name":n.name,"componentType":n.tag,"textContent":n.text,"children":n.children.iter().map(|n| &n.id).collect::<Vec<_>>(),"visible":n.visible,"locked":n.locked,"styles":n.styles})
+    let mut info = json!({"id":n.id,"name":n.name,"componentType":n.tag,"textContent":n.text,"children":n.children.iter().map(|n| &n.id).collect::<Vec<_>>(),"visible":n.visible,"locked":n.locked,"styles":n.styles});
+    if n.markup.is_some() {
+        info["icon"] = json!(n.attributes.get("data-icon"));
+    }
+    info
 }
 fn tree(n: &Node, depth: usize, prefix: usize, result: &mut String) {
     result.push_str(&format!(
@@ -84,7 +88,7 @@ fn hoist_text(doc: &mut Document, parent: &str) -> Result<()> {
     Ok(())
 }
 /// `write_html` takes inline `html` or an absolute `path` to a local .html/.htm/.svg file.
-fn html_source(args: &Value) -> Result<String> {
+pub(crate) fn html_source(args: &Value) -> Result<String> {
     match (args.get("html"), args.get("path")) {
         (Some(html), None) => {
             let html = html.as_str().ok_or("html must be a string")?;
@@ -184,6 +188,9 @@ fn jsx(n: &Node) -> String {
     out.push('>');
     if !n.text.is_empty() {
         out.push_str(&format!("{{{}}}", json!(n.text)));
+    }
+    if let Some(markup) = &n.markup {
+        out.push_str(&crate::icons::jsx(markup));
     }
     for child in &n.children {
         out.push_str(&jsx(child));
@@ -518,6 +525,7 @@ pub const MUTATIONS: &[&str] = &[
     "set_positions",
     "select_nodes",
     "set_active_page",
+    "insert_icon",
 ];
 
 pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
@@ -541,6 +549,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
                 json!({"files":store.list(bool_arg(args, "archived"), bool_arg(args, "previews"))}),
             );
         }
+        "search_icons" => return crate::icons::search(args),
         "create_file" => {
             let id = store.create(args.get("name").and_then(Value::as_str))?;
             return Ok(json!({"fileId":id,"path":store.path_of(&id).map(|p| p.to_string_lossy())}));
@@ -1309,6 +1318,29 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             }
             Ok(json!({"tokens":doc.tokens}))
         }
+        "insert_icon" => {
+            // Same placement rules as write_html; the icon becomes one layer.
+            let opt = |k: &str| args.get(k).map(css_value).transpose();
+            let mut tag = format!("<icon name=\"{}\"", html::escape(string(args, "icon")?));
+            for (attr, value) in [
+                ("size", opt("size")?),
+                ("stroke-width", opt("strokeWidth")?),
+                ("color", opt("color")?),
+                ("layer-name", opt("name")?),
+            ] {
+                if let Some(value) = value {
+                    tag.push_str(&format!(" {attr}=\"{}\"", html::escape(&value)));
+                }
+            }
+            tag.push_str(" />");
+            let mut write = args.clone();
+            write["html"] = json!(tag);
+            if write.get("mode").is_none() {
+                write["mode"] = json!("insert-children");
+            }
+            let result = mutate(doc, "write_html", &write)?;
+            Ok(json!({"nodeId":result["nodeIds"][0]}))
+        }
         _ => Err(format!("Unknown tool: {name}")),
     }
 }
@@ -1686,6 +1718,20 @@ pub fn definitions() -> Vec<Value> {
         json!({"nodeIds":ids,"depth":{"type":"integer","minimum":0,"maximum":10},"styles":ids}),
         vec!["nodeIds", "fileId"],
         true,
+    );
+    add(
+        "search_icons",
+        "Search real icon sets (Lucide, Phosphor, Tabler, Heroicons, Material Symbols and more, via Iconify) instead of drawing SVG by hand. Returns names like lucide:arrow-right for insert_icon or <icon name=\"...\" /> in write_html. Narrow with sets, e.g. [\"lucide\"]; stick to one set per design.",
+        json!({"query":s,"sets":ids,"limit":{"type":"integer","minimum":1,"maximum":200}}),
+        vec!["query"],
+        true,
+    );
+    add(
+        "insert_icon",
+        "Insert an icon from a real icon set as ONE layer (placement like write_html, default mode insert-children). size is px or a CSS length (default 24); strokeWidth works for outline sets (lucide, tabler); color defaults to currentColor so the icon follows the text color. Recolor later with update_styles color, resize with width/height. Inside write_html you can also write <icon name=\"lucide:check\" size=\"16\" stroke-width=\"1.5\" color=\"var(--accent)\" style=\"...\" />.",
+        json!({"icon":s,"targetNodeId":s,"mode":{"type":"string","enum":["insert-children","insert-before","insert-after","replace"]},"index":{"type":"integer","minimum":0},"size":{"type":["number","string"]},"strokeWidth":{"type":["number","string"]},"color":s,"name":s}),
+        vec!["icon", "targetNodeId", "fileId"],
+        false,
     );
     tools
 }

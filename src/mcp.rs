@@ -79,6 +79,7 @@ impl ServerHandler for CardboardServer {
     ) -> std::result::Result<CallToolResponse, ErrorData> {
         let args = Value::Object(request.arguments.unwrap_or_default());
         let actor = self.actor(&context);
+        // Off the async workers: rendering launches a browser and icon tools may wait on the network.
         let store = self.store.clone();
         let name = request.name.clone();
         let outcome =

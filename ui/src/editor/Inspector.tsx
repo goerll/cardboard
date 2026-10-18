@@ -278,6 +278,11 @@ function NodeInspector({ doc, nodes, parentOf }: { doc: CardboardDocument; nodes
       ))}
       {canLayout && !isFlex && !isGrid && <PaddingOnly node={node} set={set} pv={pv} pvEnd={pvEnd} />}
       {(text || node.text) && <TypographySection doc={doc} node={node} comp={comp ?? null} set={set} pv={pv} pvEnd={pvEnd} />}
+      {node.markup != null && (
+        <Section title="Icon" actions={<span className="muted small">{node.attributes['data-icon']}</span>}>
+          <ColorRow value={s.color ?? (comp ? comp.color : '#000000')} tokens={doc.tokens} onPreview={(v) => pv({ color: v })} onPreviewEnd={pvEnd} onCommit={(v) => set({ color: v })} />
+        </Section>
+      )}
       <RadiusSection node={node} set={set} pv={pv} pvEnd={pvEnd} />
       <BlendingSection node={node} set={set} pv={pv} pvEnd={pvEnd} ids={ids} />
       {!text && <FillSection doc={doc} node={node} set={set} pv={pv} pvEnd={pvEnd} />}

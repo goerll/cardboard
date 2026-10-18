@@ -22,6 +22,9 @@ pub struct Node {
     /// Canvas position of a top-level artboard.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<[f64; 2]>,
+    /// Sanitized inner SVG of an icon layer (see `icons`), rendered as this `<svg>`'s content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub markup: Option<String>,
 }
 
 impl Node {
@@ -37,6 +40,7 @@ impl Node {
             locked: false,
             visible: true,
             position: None,
+            markup: None,
         }
     }
     pub fn find(&self, id: &str) -> Option<&Node> {
@@ -190,6 +194,16 @@ impl Document {
             }
             if crate::html::is_void(&n.tag) && (!n.children.is_empty() || !n.text.is_empty()) {
                 return Err("Void elements cannot contain content".into());
+            }
+            if let Some(markup) = &n.markup
+                && (n.tag != "svg"
+                    || !n.children.is_empty()
+                    || !n.text.is_empty()
+                    || crate::icons::sanitize(markup).as_ref() != Ok(markup))
+            {
+                return Err(
+                    "Icon layers hold sanitized SVG only and cannot contain other content".into(),
+                );
             }
             for child in &n.children {
                 visit(child, ids)?;

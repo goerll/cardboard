@@ -121,6 +121,24 @@ row contents differ. After building three or more similar rows, check that their
 trailing elements sit on the same vertical lines: `get_bounds` on the rows' parent with
 `depth: 2` gives you the x of every slot.
 
+**Icons come from real icon sets; don't draw them.** Hand-typed SVG paths are guesses that look
+off and turn into a pile of layers. Find names with `search_icons` (for example
+`{"query":"settings","sets":["lucide"]}`), then place them inline with `<icon />` inside
+`write_html`, or with `insert_icon`:
+
+```html
+<button style="display:flex;align-items:center;gap:8px">Continue<icon name="lucide:arrow-right" size="16" /></button>
+```
+
+- Pick one set per design (Lucide, Phosphor `ph`, Tabler, Heroicons, Material Symbols...) so
+  stroke weights and corner styles match, and keep one or two sizes (16/20/24px).
+- `size` is px (or a CSS length), `stroke-width` tunes outline sets like Lucide and Tabler, and
+  `color` defaults to `currentColor`, so icons follow the surrounding text color or a token.
+  Recolor later with `update_styles` `color`; resize with `width`/`height`.
+- Each icon is one layer named after it. `style`, `layer-name` and other attributes work on
+  `<icon />` like on any element. Draw custom SVG only for things no set has, like a logo or an
+  illustration.
+
 ## 7. Tokens
 
 - If the file has tokens, use them: `color: var(--color-text)`, `padding: var(--spacing-4)`.

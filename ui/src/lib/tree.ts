@@ -64,9 +64,10 @@ export const TEXT_TAGS = new Set(['p', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6
 export const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'wbr', 'source', 'col']);
 export const SVG_TAGS = new Set(['svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'g', 'ellipse', 'text', 'defs', 'linearGradient', 'radialGradient', 'stop', 'clipPath', 'mask', 'tspan']);
 
-export type LayerKind = 'frame' | 'flex-row' | 'flex-col' | 'grid' | 'text' | 'image' | 'svg' | 'shape' | 'rect';
+export type LayerKind = 'frame' | 'flex-row' | 'flex-col' | 'grid' | 'text' | 'image' | 'icon' | 'svg' | 'shape' | 'rect';
 export function layerKind(n: DesignNode, artboard = false): LayerKind {
   if (n.tag === 'img') return 'image';
+  if (n.markup != null) return 'icon';
   if (n.tag === 'svg') return 'svg';
   if (SVG_TAGS.has(n.tag)) return 'shape';
   const display = n.styles.display;
@@ -91,7 +92,7 @@ export function nodeToHtml(n: DesignNode): string {
   const style = Object.entries(n.styles).map(([k, v]) => `${k}:${v}`).join(';');
   const open = `<${n.tag} layer-name="${escapeHtml(n.name)}"${attrs}${style ? ` style="${escapeHtml(style)}"` : ''}`;
   if (VOID_TAGS.has(n.tag)) return `${open} />`;
-  return `${open}>${escapeHtml(n.text)}${n.children.map(nodeToHtml).join('')}</${n.tag}>`;
+  return `${open}>${escapeHtml(n.text)}${n.markup ?? ''}${n.children.map(nodeToHtml).join('')}</${n.tag}>`;
 }
 
 export type SizeMode = 'fixed' | 'fit' | 'fill';
