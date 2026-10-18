@@ -1273,3 +1273,14 @@ fn get_bounds_measures_layout_overflow_and_computed_styles() {
     let err = tools::call(&mut s, "screenshot", &json!({"nodeId":ids[1]})).unwrap_err();
     assert!(err.contains("no visible size"), "{err}");
 }
+
+#[test]
+fn render_tools_accept_bare_ids_outside_tools_call() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let ids = insert(&mut s, &frame, "<div>Hi</div>");
+    let bare = ids[0].trim_start_matches("node-").parse::<u64>().unwrap();
+    // The MCP hub prepares renders directly, so normalization must happen there too.
+    cardboard::render::prepare(&s, "screenshot", &json!({"nodeId":bare})).unwrap();
+    cardboard::render::prepare(&s, "get_bounds", &json!({"nodeIds":[bare.to_string()]})).unwrap();
+}

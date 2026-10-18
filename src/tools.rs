@@ -224,7 +224,7 @@ fn opened(store: &Store, id: &str) -> Result<Value> {
 
 /// Agents often drop the prefix (`581` for `node-581`). Node and page ids share one counter, so
 /// the number alone is unambiguous. Style, attribute and HTML payloads are left untouched.
-fn normalize_ids(v: &mut Value) {
+pub(crate) fn normalize_ids(v: &mut Value) {
     fn fix(v: &mut Value, prefix: &str) {
         let n = match v {
             Value::Number(n) => n.as_u64(),

@@ -73,6 +73,10 @@ enum Kind {
 
 /// Snapshot what to render while the store is locked; `Job::run` does the slow part without it.
 pub fn prepare(store: &Store, name: &str, args: &Value) -> Result<Job> {
+    // Hub::call renders without going through tools::call, so accept bare ids here too.
+    let mut args = args.clone();
+    crate::tools::normalize_ids(&mut args);
+    let args = &args;
     let file = store.file_id(args)?;
     let doc = store.file(&file)?;
     let meta = json!({"fileId":file,"revision":doc.revision});
