@@ -1817,3 +1817,23 @@ fn write_html_keeps_svg_filters_for_grain() {
     assert!(markup.contains(r#"baseFrequency="0.8""#), "{markup}");
     assert!(markup.contains(r#"filter="url(#grain)""#), "{markup}");
 }
+
+#[test]
+fn write_html_ignores_indentation_inside_svg_groups() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let html = "<p>a <svg width=\"20\" height=\"20\">\n  <g>\n    <rect width=\"4\" height=\"4\"/>\n    <circle r=\"2\"/>\n  </g>\n  <text x=\"0\" y=\"10\">A <tspan>B</tspan></text>\n</svg> b</p>";
+    edit(
+        &mut s,
+        "write_html",
+        json!({"html":html,"targetNodeId":frame}),
+    );
+    let doc = s.file(&fid(&s)).unwrap();
+    let markup = cardboard::html::node_html(doc.node(&frame).unwrap(), false);
+    let g = &markup[markup.find("<g").unwrap()..markup.find("</g>").unwrap()];
+    assert!(!g.contains("<span"), "{markup}");
+    assert!(
+        markup.contains("A <tspan") || markup.contains("A </span><tspan"),
+        "{markup}"
+    );
+}

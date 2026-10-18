@@ -526,7 +526,15 @@ impl Convert<'_> {
             return false;
         };
         let display = parent.styles.get("display").map(|d| d.trim());
-        if display.is_some_and(|d| d.contains("flex") || d.contains("grid")) || parent.tag == "svg"
+        if display.is_some_and(|d| d.contains("flex") || d.contains("grid")) {
+            return false;
+        }
+        // Inside SVG only <text> and <tspan> lay out characters; indentation between shapes in
+        // <svg>, <g>, <defs> or a <filter> is not content.
+        if let Some(up) = self.tree[id].parent
+            && let Data::Element(name, _) = &self.tree[up].data
+            && name.ns == ns!(svg)
+            && !matches!(&*name.local, "text" | "tspan")
         {
             return false;
         }
