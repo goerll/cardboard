@@ -104,6 +104,55 @@ fn hoist_text(doc: &mut Document, parent: &str) -> Result<()> {
     node.children.insert(0, span);
     Ok(())
 }
+/// Unnamed text layers listed in a write_html result; the rest are counted.
+const MAX_TEXT_LAYERS: usize = 12;
+
+/// What write_html made that an agent will want to address next, so it needn't re-read the
+/// tree: `layers` maps each `layer-name` to its id (an array when a name repeats) and `texts`
+/// lists unnamed text leaves with a short snippet.
+fn created_layers(nodes: &[Node], named: &[String]) -> Vec<(&'static str, Value)> {
+    fn walk<'a>(n: &'a Node, out: &mut Vec<&'a Node>) {
+        out.push(n);
+        n.children.iter().for_each(|c| walk(c, out));
+    }
+    let mut all = vec![];
+    nodes.iter().for_each(|n| walk(n, &mut all));
+    let mut layers = serde_json::Map::new();
+    let (mut texts, mut more) = (vec![], 0);
+    for n in all {
+        if named.contains(&n.id) {
+            match layers.get_mut(&n.name) {
+                Some(Value::Array(ids)) => ids.push(json!(n.id)),
+                Some(first) => *first = json!([first.take(), n.id]),
+                None => {
+                    layers.insert(n.name.clone(), json!(n.id));
+                }
+            }
+        } else if n.children.is_empty() && !n.text.trim().is_empty() {
+            if texts.len() < MAX_TEXT_LAYERS {
+                let mut text: String = n.text.trim().chars().take(40).collect();
+                if text.len() < n.text.trim().len() {
+                    text.push('…');
+                }
+                texts.push(json!({"id":n.id,"tag":n.tag,"text":text}));
+            } else {
+                more += 1;
+            }
+        }
+    }
+    let mut out = vec![];
+    if !layers.is_empty() {
+        out.push(("layers", Value::Object(layers)));
+    }
+    if !texts.is_empty() {
+        out.push(("texts", json!(texts)));
+    }
+    if more > 0 {
+        out.push(("moreTexts", json!(more)));
+    }
+    out
+}
+
 /// `write_html` takes inline `html` or an absolute `path` to a local .html/.htm/.svg file.
 pub(crate) fn html_source(args: &Value) -> Result<String> {
     match (args.get("html"), args.get("path")) {
@@ -1128,6 +1177,7 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             let import = crate::import::parse(doc, &source)?;
             let nodes = import.nodes;
             let ids = nodes.iter().map(|n| n.id.clone()).collect::<Vec<_>>();
+            let layers = created_layers(&nodes, &import.named);
             match string(args, "mode")? {
                 "insert-children" => {
                     hoist_text(doc, target)?;
@@ -1160,6 +1210,9 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                 }
             }
             let mut result = json!({"nodeIds":ids});
+            for (key, value) in layers {
+                result[key] = value;
+            }
             if !import.warnings.is_empty() {
                 result["warnings"] = json!(import.warnings);
             }
@@ -1826,7 +1879,7 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "write_html",
-        "Insert one visual group as static HTML with inline CSS, parsed like a browser would (named entities, unclosed <p>/<li>, <img> without a slash are fine). Pass html inline, or path (absolute, .html/.htm/.svg, up to 8 MiB) to import a large file without sending it through the chat. Unsupported tags/attributes are mapped or dropped and reported in warnings; scripts, event handlers and javascript: URLs are rejected. index counts every child, text included. Preserve existing nodes through move/duplicate instead of rewriting them.",
+        "Insert one visual group as static HTML with inline CSS, parsed like a browser would (named entities, unclosed <p>/<li>, <img> without a slash are fine). Pass html inline, or path (absolute, .html/.htm/.svg, up to 8 MiB) to import a large file without sending it through the chat. Unsupported tags/attributes are mapped or dropped and reported in warnings; scripts, event handlers and javascript: URLs are rejected. index counts every child, text included. Returns nodeIds (the top-level layers), layers (layer-name -> id, an array when a name repeats; give layer-name to anything you will edit next) and texts (up to 12 unnamed text layers as {id, tag, text}), so no re-read is needed. Preserve existing nodes through move/duplicate instead of rewriting them.",
         json!({"html":s,"path":s,"targetNodeId":s,"mode":{"type":"string","enum":["insert-children","insert-before","insert-after","replace"]},"index":{"type":"integer","minimum":0}}),
         vec!["targetNodeId", "mode", "fileId"],
         false,

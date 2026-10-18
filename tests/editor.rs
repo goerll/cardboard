@@ -900,6 +900,49 @@ fn whitespace_between_inline_elements_survives_import_and_export() {
     );
     assert_eq!(html::node_html(doc.node(&again[1]).unwrap(), false), inline);
 }
+#[test]
+fn write_html_returns_ids_of_named_and_text_layers() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let mut html = String::from(
+        r#"<div layer-name="Card"><h2>Pricing plans for every team size you could ever imagine</h2><button layer-name="Buy">Buy</button><span layer-name="Price">$9</span><span layer-name="Price">$19</span>"#,
+    );
+    for i in 0..15 {
+        html.push_str(&format!("<p>Row {i}</p>"));
+    }
+    html.push_str("</div>");
+    let result = edit(
+        &mut s,
+        "write_html",
+        json!({"targetNodeId":frame,"mode":"insert-children","html":html}),
+    );
+    let doc = s.file(&fid(&s)).unwrap();
+    let layers = &result["layers"];
+    assert_eq!(layers["Card"], result["nodeIds"][0]);
+    assert_eq!(
+        doc.node(layers["Buy"].as_str().unwrap()).unwrap().text,
+        "Buy"
+    );
+    let prices = layers["Price"].as_array().unwrap();
+    assert_eq!(prices.len(), 2);
+    assert_eq!(doc.node(prices[1].as_str().unwrap()).unwrap().text, "$19");
+    let texts = result["texts"].as_array().unwrap();
+    assert_eq!(texts.len(), 12);
+    assert_eq!(texts[0]["tag"], "h2");
+    assert!(texts[0]["text"].as_str().unwrap().ends_with('…'));
+    assert_eq!(texts[1]["text"], "Row 0");
+    assert_eq!(result["moreTexts"], 4);
+    // Plain writes stay as small as before.
+    let plain = edit(
+        &mut s,
+        "write_html",
+        json!({"targetNodeId":frame,"mode":"insert-children","html":"<div></div>"}),
+    );
+    assert!(
+        plain.get("layers").is_none() && plain.get("texts").is_none(),
+        "{plain}"
+    );
+}
 
 fn card_page(s: &mut Store) -> (String, Vec<String>) {
     let frame = artboard(s);

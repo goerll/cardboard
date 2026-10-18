@@ -49,6 +49,8 @@ pub const FILE_LIMIT: usize = 8 * 1024 * 1024;
 pub struct Import {
     pub nodes: Vec<Node>,
     pub warnings: Vec<String>,
+    /// Ids of created layers that were given a `layer-name`, in document order.
+    pub named: Vec<String>,
 }
 
 pub fn parse(doc: &mut Document, html: &str) -> Result<Import> {
@@ -90,12 +92,14 @@ pub fn parse(doc: &mut Document, html: &str) -> Result<Import> {
     let mut import = Import {
         nodes: vec![],
         warnings: vec![],
+        named: vec![],
     };
     let mut out = vec![];
     let state = &mut Convert {
         doc,
         tree: &tree,
         warnings: &mut import.warnings,
+        named: &mut import.named,
     };
     for &child in &tree[root].children {
         state.child(child, None, 0, &mut out)?;
@@ -382,6 +386,7 @@ struct Convert<'a> {
     doc: &'a mut Document,
     tree: &'a [Slot],
     warnings: &'a mut Vec<String>,
+    named: &'a mut Vec<String>,
 }
 
 impl Convert<'_> {
@@ -474,7 +479,10 @@ impl Convert<'_> {
                     Ok(styles) => node.styles = styles,
                     Err(_) => node.styles = self.lenient_styles(&value),
                 },
-                "layer-name" => node.name = value,
+                "layer-name" => {
+                    node.name = value;
+                    self.named.push(node.id.clone());
+                }
                 "hidden" => node.visible = false,
                 "data-cardboard-locked" => node.locked = true,
                 _ => match validate_attribute(&key, &value) {
@@ -604,7 +612,10 @@ impl Convert<'_> {
                     Ok(styles) => styles,
                     Err(_) => self.lenient_styles(&value),
                 }),
-                "layer-name" => node.name = value,
+                "layer-name" => {
+                    node.name = value;
+                    self.named.push(node.id.clone());
+                }
                 "hidden" => node.visible = false,
                 "data-cardboard-locked" => node.locked = true,
                 _ => match validate_attribute(&key, &value) {

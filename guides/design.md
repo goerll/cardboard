@@ -96,6 +96,9 @@ type, not three tints of the same layout.
 - One visual group per `write_html` call: a nav bar, a heading block, one card, one row, a
   footer. If a call is getting past roughly fifteen lines of HTML, split it. Seeing a design
   grow piece by piece is more pleasant and easier to steer than waiting for a finished block.
+- Give `layer-name` to anything you will touch again. The `write_html` result maps those names
+  to ids (`layers`) and lists unnamed text layers (`texts`), so you can edit right away
+  without reading the tree back.
 - Reuse instead of retyping. Anything that repeats (buttons, list rows, cards, nav items,
   badges) should be a component: build one, call `create_component` on it, then place copies
   with `insert_instance`. Change a copy's text or styles with `set_text_content` and
