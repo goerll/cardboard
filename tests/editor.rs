@@ -1780,3 +1780,22 @@ fn write_html_mode_defaults_to_insert_children() {
             .any(|c| c.id == id)
     );
 }
+
+#[test]
+fn landing_guide_is_its_own_topic() {
+    let mut s = Store::memory();
+    let main = tools::call(&mut s, "get_guide", &json!({"topic":"cardboard-design"})).unwrap();
+    assert!(
+        main["guide"]
+            .as_str()
+            .unwrap()
+            .contains("cardboard-landing")
+    );
+    let landing = tools::call(&mut s, "get_guide", &json!({"topic":"cardboard-landing"})).unwrap();
+    assert!(
+        landing["guide"]
+            .as_str()
+            .unwrap()
+            .contains("Refinement pass")
+    );
+}

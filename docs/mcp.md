@@ -38,7 +38,7 @@ Inspect `tools/list` for authoritative JSON schemas. The implementation lives in
 
 ## Editing sequence
 
-1. Call `get_guide` with `{"topic":"cardboard-design"}`.
+1. Call `get_guide` with `{"topic":"cardboard-design"}` (and `{"topic":"cardboard-landing"}` for landing and marketing pages).
 2. Call `list_resources` and explicitly choose a `fileId`.
 3. Read `get_basic_info`; inspect relevant children and styles before editing existing work.
 4. Create an artboard or use an existing target.

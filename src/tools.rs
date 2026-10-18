@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 pub const INSTRUCTIONS: &str = "Cardboard is a local HTML/CSS design editor; the person sees your edits live and shares your undo history (undo only reverts your own latest edit). Before anything else, read get_guide with topic cardboard-design. Start with get_basic_info and get_selection, and pass fileId and pageId explicitly. Post a short design plan before starting something new, add one visual group per write_html call, make repeated UI a component (create_component, insert_instance) and reuse layers with duplicate_nodes and move_nodes, and use the file's tokens. Most tools report authored CSS; use screenshot to see your work and get_bounds to measure it after each visual group, and only claim visual checks you actually looked at. Edited layers are marked as yours and other agents can't change them; call finish_working_on_nodes when done.";
 pub const GUIDE: &str = include_str!("../guides/design.md");
+pub const LANDING_GUIDE: &str = include_str!("../guides/landing.md");
 
 pub fn string<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
     v.get(key)
@@ -658,7 +659,8 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
         "get_guide" => {
             return match string(args, "topic")? {
                 "cardboard-design" => Ok(json!({"guide":GUIDE})),
-                _ => Err("Available guide: cardboard-design".into()),
+                "cardboard-landing" => Ok(json!({"guide":LANDING_GUIDE})),
+                _ => Err("Available guides: cardboard-design, cardboard-landing".into()),
             };
         }
         "list_resources" => {
@@ -1936,7 +1938,7 @@ pub fn definitions() -> Vec<Value> {
     };
     add(
         "get_guide",
-        "Read Cardboard's design workflow before creating a design.",
+        "Read Cardboard's design workflow before creating a design. Topics: cardboard-design (always read first), cardboard-landing (landing and marketing pages).",
         json!({"topic":s}),
         vec!["topic"],
         true,
