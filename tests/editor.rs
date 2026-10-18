@@ -858,6 +858,91 @@ fn misnested_html_is_repaired_the_way_browsers_do() {
         "{html}"
     );
 }
+#[test]
+fn whitespace_between_inline_elements_survives_import_and_export() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let ids = insert(
+        &mut s,
+        &frame,
+        concat!(
+            "<p><span>Kenji Watanabe</span> <span>10:14</span>\n  <b>new</b></p>",
+            "<div>\n  <p>a</p>\n  <p>b</p>\n  <span>c</span>\n</div>",
+            "<div style=\"display:flex\"><span>a</span> <span>b</span></div>",
+            "<span> <em>x</em></span>",
+        ),
+    );
+    let doc = s.file(&fid(&s)).unwrap();
+    let node = |i: usize| doc.node(&ids[i]).unwrap();
+    let texts = |n: &cardboard::document::Node| {
+        n.children
+            .iter()
+            .map(|c| c.text.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(texts(node(0)), ["Kenji Watanabe", " ", "10:14", " ", "new"]);
+    // Indentation next to blocks, at block edges and in flex containers renders nothing.
+    assert_eq!(tags(node(1)), ["p", "p", "span"]);
+    assert_eq!(tags(node(2)), ["span", "span"]);
+    // Inside an inline parent the leading space is not at a line edge, so it stays.
+    assert_eq!(texts(node(3)), [" ", "x"]);
+    let exported = html::node_html(node(0), false);
+    assert!(
+        exported.contains("Watanabe</span><span> </span><span>10:14</span>"),
+        "{exported}"
+    );
+    let inline = html::node_html(node(3), false);
+    let again = insert(&mut s, &frame, &format!("{exported}{inline}"));
+    let doc = s.file(&fid(&s)).unwrap();
+    assert_eq!(
+        html::node_html(doc.node(&again[0]).unwrap(), false),
+        exported
+    );
+    assert_eq!(html::node_html(doc.node(&again[1]).unwrap(), false), inline);
+}
+#[test]
+fn write_html_returns_ids_of_named_and_text_layers() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let mut html = String::from(
+        r#"<div layer-name="Card"><h2>Pricing plans for every team size you could ever imagine</h2><button layer-name="Buy">Buy</button><span layer-name="Price">$9</span><span layer-name="Price">$19</span>"#,
+    );
+    for i in 0..15 {
+        html.push_str(&format!("<p>Row {i}</p>"));
+    }
+    html.push_str("</div>");
+    let result = edit(
+        &mut s,
+        "write_html",
+        json!({"targetNodeId":frame,"mode":"insert-children","html":html}),
+    );
+    let doc = s.file(&fid(&s)).unwrap();
+    let layers = &result["layers"];
+    assert_eq!(layers["Card"], result["nodeIds"][0]);
+    assert_eq!(
+        doc.node(layers["Buy"].as_str().unwrap()).unwrap().text,
+        "Buy"
+    );
+    let prices = layers["Price"].as_array().unwrap();
+    assert_eq!(prices.len(), 2);
+    assert_eq!(doc.node(prices[1].as_str().unwrap()).unwrap().text, "$19");
+    let texts = result["texts"].as_array().unwrap();
+    assert_eq!(texts.len(), 12);
+    assert_eq!(texts[0]["tag"], "h2");
+    assert!(texts[0]["text"].as_str().unwrap().ends_with('…'));
+    assert_eq!(texts[1]["text"], "Row 0");
+    assert_eq!(result["moreTexts"], 4);
+    // Plain writes stay as small as before.
+    let plain = edit(
+        &mut s,
+        "write_html",
+        json!({"targetNodeId":frame,"mode":"insert-children","html":"<div></div>"}),
+    );
+    assert!(
+        plain.get("layers").is_none() && plain.get("texts").is_none(),
+        "{plain}"
+    );
+}
 
 fn card_page(s: &mut Store) -> (String, Vec<String>) {
     let frame = artboard(s);
@@ -1272,6 +1357,57 @@ fn get_bounds_measures_layout_overflow_and_computed_styles() {
     assert_eq!(bounds["nodes"][0]["hidden"], true);
     let err = tools::call(&mut s, "screenshot", &json!({"nodeId":ids[1]})).unwrap_err();
     assert!(err.contains("no visible size"), "{err}");
+}
+
+#[test]
+fn get_bounds_ignores_glyph_overhang_and_separates_deliberate_clipping() {
+    if !renderer() {
+        return;
+    }
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let ids = insert(
+        &mut s,
+        &frame,
+        concat!(
+            r#"<div style="width:600px"><h1 style="margin:0;font:italic 96px/0.8 serif">Jagged type</h1></div>"#,
+            r#"<div style="width:100px;height:40px;overflow:hidden"><div style="width:200px;height:80px;flex:none"></div></div>"#,
+            r#"<div style="width:120px;height:30px;overflow:hidden"><p style="margin:0;font-size:16px">Long text that wraps over several lines in a small box</p></div>"#,
+            r#"<div style="height:20px;flex:none"><div style="height:60px"></div></div>"#,
+        ),
+    );
+    let bounds = edit(&mut s, "get_bounds", json!({"nodeIds":[frame],"depth":3}));
+    let nodes = bounds["nodes"].as_array().unwrap();
+    let by_id = |id: &str| nodes.iter().find(|n| n["id"] == id).unwrap();
+    let child = |id: &str| {
+        let doc = s.file(&fid(&s)).unwrap();
+        doc.node(id).unwrap().children[0].id.clone()
+    };
+    let keys = |n: &Value| {
+        let mut k: Vec<_> = n.as_object().unwrap().keys().cloned().collect();
+        k.retain(|k| k.starts_with("overflow") || k.starts_with("clipped") || k == "outsideParent");
+        k
+    };
+    // A tight line-height lets descenders poke out of the line box; that is not overflow.
+    assert!(keys(by_id(&frame)).is_empty(), "{}", by_id(&frame));
+    assert!(keys(by_id(&ids[0])).is_empty(), "{}", by_id(&ids[0]));
+    assert!(keys(by_id(&child(&ids[0]))).is_empty());
+    // Deliberate clipping is reported softly, and the clipped child names its clipper.
+    let mask = by_id(&ids[1]);
+    assert_eq!(
+        (mask["clippedX"].as_f64(), mask["clippedY"].as_f64()),
+        (Some(100.0), Some(40.0))
+    );
+    assert_eq!(keys(mask), ["clippedX", "clippedY"]);
+    let photo = by_id(&child(&ids[1]));
+    assert_eq!(photo["clippedBy"], json!(ids[1]));
+    assert!(photo.get("outsideParent").is_none());
+    // Text cut off by a clipping box is still reported.
+    assert!(by_id(&ids[2])["clippedY"].as_f64().unwrap() > 20.0);
+    assert_eq!(by_id(&child(&ids[2]))["clippedBy"], json!(ids[2]));
+    // Visible spill stays overflow.
+    assert_eq!(by_id(&ids[3])["overflowY"], 40.0);
+    assert_eq!(by_id(&child(&ids[3]))["outsideParent"], true);
 }
 
 #[test]

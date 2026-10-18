@@ -153,6 +153,9 @@ row of icon cards, and nothing on the page is memorable. Plan against those up f
 - One visual group per `write_html` call: a nav bar, a heading block, one card, one row, a
   footer. If a call is getting past roughly fifteen lines of HTML, split it. Seeing a design
   grow piece by piece is more pleasant and easier to steer than waiting for a finished block.
+- Give `layer-name` to anything you will touch again. The `write_html` result maps those names
+  to ids (`layers`) and lists unnamed text layers (`texts`), so you can edit right away
+  without reading the tree back.
 - Reuse instead of retyping. Anything that repeats (buttons, list rows, cards, nav items,
   badges) should be a component: build one, call `create_component` on it, then place copies
   with `insert_instance`. Change a copy's text or styles with `set_text_content` and
@@ -294,8 +297,9 @@ boxes. Both render the way the canvas does, with the file's tokens.
   look at it before moving on. Layers come back at 2x, so screenshot a section when a full
   artboard is too small to judge details.
 - Use `get_bounds` for things pixels make easy to miss: `overflowX`/`overflowY` (text or
-  children larger than their box), `outsideParent`, `hidden`, and whether repeated rows share
-  the same x positions. Ask for computed `styles` (say `font-size`, `color`) when the cascade
+  children spilling out of their box), `clippedX`/`clippedY` and `clippedBy` (content cut off
+  by a box with `overflow: hidden`: fine for a cropped photo, a bug for cut-off text),
+  `outsideParent`, `hidden`, and whether repeated rows share the same x positions. Ask for computed `styles` (say `font-size`, `color`) when the cascade
   or tokens might not resolve the way you expect.
 - Review each section against this list and fix what you find: spacing rhythm, type
   hierarchy and readability, contrast, alignment and shared columns, content clipped by the

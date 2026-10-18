@@ -49,6 +49,8 @@ pub const FILE_LIMIT: usize = 8 * 1024 * 1024;
 pub struct Import {
     pub nodes: Vec<Node>,
     pub warnings: Vec<String>,
+    /// Ids of created layers that were given a `layer-name`, in document order.
+    pub named: Vec<String>,
 }
 
 pub fn parse(doc: &mut Document, html: &str) -> Result<Import> {
@@ -90,12 +92,14 @@ pub fn parse(doc: &mut Document, html: &str) -> Result<Import> {
     let mut import = Import {
         nodes: vec![],
         warnings: vec![],
+        named: vec![],
     };
     let mut out = vec![];
     let state = &mut Convert {
         doc,
         tree: &tree,
         warnings: &mut import.warnings,
+        named: &mut import.named,
     };
     for &child in &tree[root].children {
         state.child(child, None, 0, &mut out)?;
@@ -371,10 +375,18 @@ fn policy(tag: &str, svg: bool) -> Result<Policy> {
     })
 }
 
+/// Elements that lay out inline by default (a `<br>` ends the line, so it is not one of them).
+const INLINE: &[&str] = &[
+    "span", "a", "strong", "em", "b", "i", "u", "s", "small", "code", "label", "sup", "sub",
+    "mark", "time", "abbr", "cite", "q", "kbd", "samp", "var", "del", "ins", "dfn", "data", "img",
+    "button", "input", "select", "textarea", "icon", "meter", "progress", "picture",
+];
+
 struct Convert<'a> {
     doc: &'a mut Document,
     tree: &'a [Slot],
     warnings: &'a mut Vec<String>,
+    named: &'a mut Vec<String>,
 }
 
 impl Convert<'_> {
@@ -387,19 +399,27 @@ impl Convert<'_> {
     fn child(
         &mut self,
         id: usize,
-        parent: Option<&str>,
+        parent: Option<&Node>,
         depth: usize,
         out: &mut Vec<Child>,
     ) -> Result<()> {
         match &self.tree[id].data {
             Data::Text(text) => {
-                let keep_space = parent.is_some_and(|p| matches!(p, "pre" | "code" | "textarea"));
-                if !text.is_empty() && (keep_space || !text.trim().is_empty()) {
+                let keep_space =
+                    parent.is_some_and(|p| matches!(p.tag.as_str(), "pre" | "code" | "textarea"));
+                let text = if keep_space || !text.trim().is_empty() {
+                    text.as_str()
+                } else if self.renders_space(id, parent) {
+                    " "
+                } else {
+                    ""
+                };
+                if !text.is_empty() {
                     if let Some(Child::Text(prev)) = out.last_mut() {
                         prev.text.push_str(text);
                     } else {
                         let mut span = Node::new(self.doc.allocate(), "span", "Text");
-                        span.text = text.clone();
+                        span.text = text.into();
                         out.push(Child::Text(span));
                     }
                 }
@@ -459,7 +479,10 @@ impl Convert<'_> {
                     Ok(styles) => node.styles = styles,
                     Err(_) => node.styles = self.lenient_styles(&value),
                 },
-                "layer-name" => node.name = value,
+                "layer-name" => {
+                    node.name = value;
+                    self.named.push(node.id.clone());
+                }
                 "hidden" => node.visible = false,
                 "data-cardboard-locked" => node.locked = true,
                 _ => match validate_attribute(&key, &value) {
@@ -485,7 +508,7 @@ impl Convert<'_> {
         }
         let mut children = vec![];
         for &child in &self.tree[id].children {
-            self.child(child, Some(&tag), depth + 1, &mut children)?;
+            self.child(child, Some(&node), depth + 1, &mut children)?;
         }
         if let [Child::Text(span)] = children.as_mut_slice() {
             node.text = std::mem::take(&mut span.text);
@@ -493,6 +516,62 @@ impl Convert<'_> {
             node.children = nodes(children);
         }
         Ok(Some(node))
+    }
+
+    /// Whether whitespace-only text renders as a space the way a browser lays it out: between
+    /// inline content in normal flow. Indentation next to blocks, at the edges of a block, in
+    /// flex/grid containers (which skip it) or at the top level of a fragment is dropped.
+    fn renders_space(&self, id: usize, parent: Option<&Node>) -> bool {
+        let Some(parent) = parent else {
+            return false;
+        };
+        let display = parent.styles.get("display").map(|d| d.trim());
+        if display.is_some_and(|d| d.contains("flex") || d.contains("grid")) || parent.tag == "svg"
+        {
+            return false;
+        }
+        let edge_ok = display.map_or(INLINE.contains(&parent.tag.as_str()), |d| {
+            d.starts_with("inline") && !d.contains("block")
+        });
+        let Some(up) = self.tree[id].parent else {
+            return false;
+        };
+        let siblings = &self.tree[up].children;
+        let at = siblings.iter().position(|&c| c == id).unwrap_or(0);
+        let before = siblings[..at].iter().rev().find_map(|&c| self.flow(c));
+        let after = siblings[at + 1..].iter().find_map(|&c| self.flow(c));
+        before.unwrap_or(edge_ok) && after.unwrap_or(edge_ok)
+    }
+
+    /// Some(true) for inline content, Some(false) for a block or line break, None for nodes
+    /// that leave no box (comments, metadata, display:none).
+    fn flow(&self, id: usize) -> Option<bool> {
+        let Data::Element(name, attrs) = &self.tree[id].data else {
+            return match &self.tree[id].data {
+                Data::Text(t) if !t.trim().is_empty() => Some(true),
+                _ => None,
+            };
+        };
+        if matches!(
+            &*name.local,
+            "meta" | "title" | "head" | "style" | "link" | "template"
+        ) {
+            return None;
+        }
+        let display = attrs
+            .iter()
+            .find(|a| &*a.name.local == "style")
+            .and_then(|a| parse_styles(&a.value).ok())
+            .and_then(|s| s.get("display").cloned());
+        match display.as_deref().map(str::trim) {
+            Some("none") => None,
+            Some(d) => Some(d.starts_with("inline")),
+            None => Some(
+                name.ns == ns!(svg)
+                    || INLINE.contains(&&*name.local)
+                    || matches!(policy(&name.local, false), Ok(Policy::Map("span"))),
+            ),
+        }
     }
 
     /// `<icon name="lucide:arrow-right" size="20" stroke-width="1.5" color="..." />` becomes one
@@ -533,7 +612,10 @@ impl Convert<'_> {
                     Ok(styles) => styles,
                     Err(_) => self.lenient_styles(&value),
                 }),
-                "layer-name" => node.name = value,
+                "layer-name" => {
+                    node.name = value;
+                    self.named.push(node.id.clone());
+                }
                 "hidden" => node.visible = false,
                 "data-cardboard-locked" => node.locked = true,
                 _ => match validate_attribute(&key, &value) {

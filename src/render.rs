@@ -35,15 +35,45 @@ const FRAME_CSS: &str = "*,*::before,*::after{box-sizing:border-box}html,body{ma
 const CSP: &str = "default-src 'none'; img-src https: http: data: file:; style-src 'unsafe-inline'; font-src https: data: file:; script-src 'none'; base-uri 'none'; form-action 'none'";
 
 /// Waits for fonts and images, then reports page-space boxes for every design node.
+///
+/// One bottom-up pass also finds, per node, how far its descendants' boxes reach past its
+/// padding box (`boxRight`/`boxBottom`; a clipping child contributes only its own box) and the
+/// largest font size of text inside it, so overflow from glyphs alone can be told apart from
+/// boxes that don't fit. `clippedBy` names the nearest ancestor that clips part of the box.
 const MEASURE: &str = r#"(async ({styleIds, props}) => {
   const settle = Promise.all([document.fonts.ready, ...[...document.images].map(i => i.decode().catch(() => {}))]);
   await Promise.race([settle, new Promise(r => setTimeout(r, 5000))]);
-  const want = new Set(styleIds), out = {};
+  const want = new Set(styleIds), out = {}, info = new Map();
+  const acc = el => info.get(el) || {right: -Infinity, bottom: -Infinity, font: 0};
+  const els = [...document.querySelectorAll('.cb-ab *')];
+  for (let i = els.length - 1; i >= 0; i--) {
+    const el = els[i], cs = getComputedStyle(el), r = el.getBoundingClientRect(), a = acc(el);
+    const shown = el.getClientRects().length > 0;
+    const text = [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
+    const font = Math.max(a.font, text ? parseFloat(cs.fontSize) || 0 : 0);
+    const clipX = shown && cs.overflowX !== 'visible', clipY = shown && cs.overflowY !== 'visible';
+    info.set(el, {...a, font, clipX, clipY, r, shown});
+    const p = acc(el.parentElement);
+    p.right = Math.max(p.right, shown ? r.right : -Infinity, clipX ? -Infinity : a.right);
+    p.bottom = Math.max(p.bottom, shown ? r.bottom : -Infinity, clipY ? -Infinity : a.bottom);
+    p.font = Math.max(p.font, font);
+    info.set(el.parentElement, p);
+  }
   for (const el of document.querySelectorAll('[data-cardboard-id]')) {
-    const r = el.getBoundingClientRect(), id = el.getAttribute('data-cardboard-id');
+    const m = info.get(el), r = m.r, id = el.getAttribute('data-cardboard-id');
     const b = {x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height,
       scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight,
-      rendered: el.getClientRects().length > 0};
+      boxRight: Math.max(0, m.right - (r.left + el.clientLeft + el.clientWidth)),
+      boxBottom: Math.max(0, m.bottom - (r.top + el.clientTop + el.clientHeight)),
+      font: m.font, clipX: m.clipX, clipY: m.clipY, rendered: m.shown};
+    for (let a = el.parentElement; m.shown && r.width > 0 && a && !a.classList.contains('cb-ab'); a = a.parentElement) {
+      const c = info.get(a), left = c.r.left + a.clientLeft, top = c.r.top + a.clientTop;
+      if ((c.clipX && (r.left < left - 0.5 || r.right > left + a.clientWidth + 0.5))
+        || (c.clipY && (r.top < top - 0.5 || r.bottom > top + a.clientHeight + 0.5))) {
+        b.clippedBy = a.closest('[data-cardboard-id]').getAttribute('data-cardboard-id');
+        break;
+      }
+    }
     if (want.has(id)) { const cs = getComputedStyle(el); b.styles = Object.fromEntries(props.map(p => [p, cs.getPropertyValue(p)])); }
     out[id] = b;
   }
@@ -332,24 +362,60 @@ impl Job {
                     if !b["rendered"].as_bool().unwrap_or(false) {
                         entry["hidden"] = json!(true);
                     }
-                    // Content wider/taller than the box: text or children spilling or clipped.
-                    for (axis, scroll, client) in [
-                        ("overflowX", "scrollWidth", "clientWidth"),
-                        ("overflowY", "scrollHeight", "clientHeight"),
+                    // Content wider/taller than the box. Text lines poke out of their line
+                    // boxes by a fraction of an em (descenders under a tight line-height,
+                    // italic overhang), so overflow made of text alone must exceed that; a
+                    // clipped or spilling line is a full line height. Boxes count from 1px.
+                    // A box that clips its own overflow reports it as clippedX/clippedY.
+                    for (axis, clipped, scroll, client, reach, clip, em) in [
+                        (
+                            "overflowX",
+                            "clippedX",
+                            "scrollWidth",
+                            "clientWidth",
+                            "boxRight",
+                            "clipX",
+                            0.15,
+                        ),
+                        (
+                            "overflowY",
+                            "clippedY",
+                            "scrollHeight",
+                            "clientHeight",
+                            "boxBottom",
+                            "clipY",
+                            0.35,
+                        ),
                     ] {
                         let extra = num(b, scroll) - num(b, client);
-                        if num(b, client) > 0.0 && extra >= 1.0 {
-                            entry[axis] = json!(extra);
+                        let glyphs = (em * num(b, "font")).max(2.0);
+                        if num(b, client) > 0.0
+                            && extra >= 1.0
+                            && (num(b, reach) >= 1.0 || extra > glyphs)
+                        {
+                            let key = if b[clip].as_bool().unwrap_or(false) {
+                                clipped
+                            } else {
+                                axis
+                            };
+                            entry[key] = json!(extra);
                         }
                     }
+                    // Leaving a parent that clips is reported once, as clippedBy.
                     if let Some(p) = parent.as_deref().and_then(|p| boxes.get(p))
                         && w > 0.0
-                        && (x < num(p, "x") - 0.5
-                            || y < num(p, "y") - 0.5
-                            || x + w > num(p, "x") + num(p, "width") + 0.5
-                            || y + h > num(p, "y") + num(p, "height") + 0.5)
                     {
-                        entry["outsideParent"] = json!(true);
+                        let clips = |axis: &str| p[axis].as_bool().unwrap_or(false);
+                        let out_x =
+                            x < num(p, "x") - 0.5 || x + w > num(p, "x") + num(p, "width") + 0.5;
+                        let out_y =
+                            y < num(p, "y") - 0.5 || y + h > num(p, "y") + num(p, "height") + 0.5;
+                        if (out_x && !clips("clipX")) || (out_y && !clips("clipY")) {
+                            entry["outsideParent"] = json!(true);
+                        }
+                    }
+                    if let Some(by) = b.get("clippedBy") {
+                        entry["clippedBy"] = by.clone();
                     }
                     if let Some(styles) = b.get("styles") {
                         entry["styles"] = styles.clone();
