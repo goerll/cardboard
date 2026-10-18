@@ -689,7 +689,7 @@ fn unsupported_markup_maps_or_drops_with_warnings() {
         json!({"targetNodeId":frame,"mode":"insert-children","html":concat!(
             "<!doctype html><html><head><meta charset=\"utf-8\"><title>Page</title><style>.a{color:red}</style></head><body>",
             "<my-card data-x=1><b>Bold</b></my-card>",
-            "<svg viewBox=\"0 0 1 1\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"><filter><feGaussianBlur/></filter><rect/></svg>",
+            "<svg viewBox=\"0 0 1 1\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"><animate attributeName=\"x\"/><rect/></svg>",
             "<div itemscope style=\"color:red;background:url(javascript:alert(1))\">x</div>",
             "</body></html>",
         )}),
@@ -703,7 +703,7 @@ fn unsupported_markup_maps_or_drops_with_warnings() {
     for expected in [
         "<style>",
         "<my-card> is not supported; imported as <div>",
-        "<filter>",
+        "<animate>",
         "itemscope",
         "background",
     ] {
