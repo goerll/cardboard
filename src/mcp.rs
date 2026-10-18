@@ -25,8 +25,13 @@ impl ServerHandler for CardboardServer {
             .map(serde_json::from_value)
             .collect::<std::result::Result<Vec<Tool>, _>>()
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        // Protocol 2026-07-28 requires cache hints on tools/list. rmcp only
+        // fills them in after an `initialize` handshake, and newer clients
+        // (Claude Code 2.1.296+) negotiate per request instead, so set them here.
         Ok(ListToolsResult {
             tools,
+            ttl_ms: Some(0),
+            cache_scope: Some(CacheScope::Private),
             ..Default::default()
         })
     }

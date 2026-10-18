@@ -9,7 +9,7 @@ description = "An open source HTML/CSS design editor with an agent interface"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 quick-xml = "0.38.4"
-rmcp = { version = "=3.2.0", default-features = false, features = ["server", "transport-io"] }
+rmcp = { version = "=3.5.1", default-features = false, features = ["server", "transport-io"] }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "io-std", "io-util", "net", "sync", "time", "signal"] }
 axum = { version = "0.8.4", default-features = false, features = ["http1", "tokio", "ws", "query"] }
 rust-embed = "8.7"
