@@ -29,6 +29,44 @@ refinement pass at the end.
   scale contrast between them: a huge statement next to a dense, small-print grid reads as designed;
   every section at the same heading size, width and padding reads as generated.
 
+## Give every section a visual idea
+
+What separates a designed section from a template one is rarely polish; it's that the section has
+an idea you could describe as a picture. "The day's tide drawn as one long curve across a dark band,
+with the safe sailing windows lit along it" is an idea. "Heading on the left, table on the right" is a layout. A
+page where the hero has an idea and every later section is text in rows reads as cheap, however
+clean the rows are.
+
+- **Pick a world first.** Before drawing, write in your plan one line naming the page's world and
+  three or four motifs taken from the product itself (its materials, instruments, artifacts,
+  places, the marks it leaves): for a ceramics studio, raw clay and glaze tests, the kiln's
+  temperature log, fingerprints in the rim, the handwritten firing tag. Reuse those motifs across sections; that
+  recurrence is what reads as personality.
+- **Write a visual idea per section.** In the section outline, give each section one sentence
+  saying what the visitor sees, not what the section says, and which medium carries it: a
+  photograph or rendered object for physical things and people, drawn SVG/CSS for data, diagrams
+  and product UI. If the sentence is "a heading and some text", find the picture of the claim:
+  - a spec list becomes a dimensioned drawing of the object, with the figures as callouts on it;
+  - a list of options (plans, profiles, flavours, regions) becomes the things themselves: labels,
+    swatches, cards set at real scale, or one chart where each option is a line;
+  - "integrates with everything" becomes a diagram of the actual flow, not a logo grid;
+  - "fast" or "secure" becomes the moment it shows: the timeline, the blocked attempt, the log line;
+  - the closing call shows the product one last time (the object on a counter, the card in hand,
+    the app on a phone) instead of a flat coloured band with a form.
+  Let at most one section be text alone, and make that one a statement set very large.
+- **One dominant move per section.** The visual should be the largest thing in its section and
+  the first thing the eye lands on, with the text supporting it. Don't spread effort over three
+  small visuals where one large one would carry.
+- **Light and material.** Keep a consistent light source and use it on the key visuals: a soft
+  radial glow behind the product, a gradient that shifts the ground from one section to the next,
+  a shadow under objects that rest on something, grain or a photograph where the product is
+  physical. Commit to a dominant colour and use the accent sharply and rarely; timid, evenly
+  spread palettes look generated. Vary the ground between sections (light, dark, photo, saturated)
+  so the page has rhythm instead of one long sheet.
+- **Choose from a few.** For the sections that feel weakest, list two or three different visual
+  ideas before drawing one and pick the most specific to this product. The first idea is usually
+  the one every page has.
+
 ## Restraint: signs a page was generated
 
 Check your page against these. Each is fine as one deliberate choice; several together are what
@@ -82,6 +120,10 @@ and go through it as an editor:
 4. Reread every heading out loud. Rewrite the ones that sound like ad copy into plain statements.
 5. Compare neighbouring sections: same layout, same scale, same ground twice in a row means one
    of them should change.
+6. Cover the text of each section with your hand (or look at its screenshot at thumbnail size).
+   If what's left is boxes and lines, the section still needs its visual idea. Compare each
+   section with the hero: if the hero is the only part that looks designed, the later sections
+   aren't done.
 
 Everything in the main `cardboard-design` guide still applies: build in small steps, look at
 each section with `screenshot`, and use components for repeated rows.
