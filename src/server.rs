@@ -145,7 +145,7 @@ async fn page(
     let Some(index) = Assets::get("index.html") else {
         return (
             StatusCode::NOT_FOUND,
-            "The UI is not built. Run `npm run build` in ui/.",
+            "The UI is not built. Run `pnpm build` in ui/.",
         )
             .into_response();
     };

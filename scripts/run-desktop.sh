@@ -6,9 +6,9 @@ cd "$cardboard_root"
 export CEF_PATH="${CEF_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/cardboard/cef}"
 # Rebuild the editor UI when its sources are newer than the last build.
 if [[ -f ui/package.json ]]; then
-  [[ -d ui/node_modules ]] || npm --prefix ui install
+  [[ -d ui/node_modules ]] || pnpm -C ui install
   if [[ ! -f ui/dist/index.html ]] || [[ -n "$(find ui/src ui/index.html ui/package.json -newer ui/dist/index.html -print -quit 2>/dev/null)" ]]; then
-    npm --prefix ui run build
+    pnpm -C ui build
   fi
 fi
 cargo build --manifest-path desktop/Cargo.toml -j 8

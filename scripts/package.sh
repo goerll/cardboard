@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Packages a release build into dist/. Run after:
-#   npm --prefix ui ci && npm --prefix ui run build
+#   pnpm -C ui install --frozen-lockfile && pnpm -C ui build
 #   cargo build --release
 #   cargo build --release --manifest-path desktop/Cargo.toml
 # CEF_PATH must point at the Chromium runtime the desktop build used.

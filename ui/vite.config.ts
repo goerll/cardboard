@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The Rust server serves dist/; `npm run dev` proxies the WebSocket to `cardboard serve --port 4610`.
+// The Rust server serves dist/; `pnpm dev` proxies the WebSocket to `cardboard serve --port 4610`.
 export default defineConfig({
   plugins: [react()],
   base: '/',

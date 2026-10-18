@@ -104,11 +104,11 @@ git clone https://github.com/goerll/cardboard && cd cardboard
 cargo run --release -- serve --open          # or the editor in your browser
 ```
 
-The server embeds `ui/dist`, so build the UI before a plain `cargo build`: `npm --prefix ui ci && npm --prefix ui run build`.
+The server embeds `ui/dist`, so build the UI before a plain `cargo build`: `pnpm -C ui install --frozen-lockfile && pnpm -C ui build`.
 
 ```sh
 cargo test && cargo clippy --all-targets -- -D warnings
-npm --prefix ui run dev       # Vite on :5173, proxies /ws to `cardboard serve --port 4610`
+pnpm -C ui dev                # Vite on :5173, proxies /ws to `cardboard serve --port 4610`
 scripts/package.sh            # release archive for the current OS into dist/
 ```
 
