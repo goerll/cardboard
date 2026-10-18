@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "cardboard"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -248,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "cardboard-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cardboard",
  "cef",
