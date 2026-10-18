@@ -21,6 +21,10 @@ import {
   AlignJustify,
   Droplet,
   Check,
+  Diamond,
+  Unlink,
+  RotateCcw,
+  CornerUpRight,
 } from 'lucide-react';
 import type { CardboardDocument, DesignNode } from '../types';
 import { activePage, displayName, indexPage, isTextLeaf, nodeToHtml, sizeMode } from '../lib/tree';
@@ -29,6 +33,7 @@ import { Checkbox, IconButton, NumberField, Popover, Section, Segmented, Select,
 import { ColorRow } from '../ui/ColorPicker';
 import { edit, engineRef, preview, setEditor, setStyles, toast, useEditor } from './store';
 import { call, request } from '../api';
+import { componentRole, createComponent, detachInstances, findNode, instanceCount, resetOverrides, reveal, sourceLayer } from './components';
 
 const I = 13;
 
@@ -237,6 +242,7 @@ function NodeInspector({ doc, nodes, parentOf }: { doc: CardboardDocument; nodes
         }
         className="title-section"
       />
+      {nodes.length === 1 && <ComponentSection doc={doc} node={node} />}
       <Section title="Layout">
         <div className="grid3">
           <NumberField label="X" value={String(round(artboard ? node.position?.[0] ?? geo?.x ?? 0 : geo?.x ?? 0))} onCommit={(v) => setXY('x', v)} />
@@ -985,6 +991,59 @@ function CssSection({ node, ids }: { node: DesignNode; ids: string[] }) {
           }}
         />
       )}
+    </Section>
+  );
+}
+
+function ComponentSection({ doc, node }: { doc: CardboardDocument; node: DesignNode }) {
+  const role = componentRole(node);
+  if (role === null)
+    return <Section title="Component" empty onAdd={() => createComponent([node.id])} actions={<IconButton icon={<Plus size={I} />} title="Create component (Ctrl Alt K)" onClick={() => createComponent([node.id])} />} />;
+  if (role === 'main') {
+    const count = instanceCount(doc, node.id);
+    return (
+      <Section title="Main component">
+        <p className="muted small">{count === 1 ? '1 instance' : `${count} instances`}. Edits here reach all of them; instance overrides are kept.</p>
+      </Section>
+    );
+  }
+  if (role === 'inner') {
+    const root = node.id.slice(0, node.id.indexOf(':'));
+    return (
+      <Section title="Instance layer">
+        <p className="muted small">Text, style and visibility changes here are overrides on this instance. Structure comes from the main.</p>
+        <div className="btn-row">
+          <button type="button" className="btn small" onClick={() => reveal(doc, root)}>
+            Select instance
+          </button>
+          <button type="button" className="btn small" onClick={() => reveal(doc, sourceLayer(node.id))}>
+            <CornerUpRight size={I} /> Main layer
+          </button>
+        </div>
+      </Section>
+    );
+  }
+  const main = findNode(doc, node.instance!.componentId)?.node;
+  const overrides = Object.keys(node.instance!.overrides ?? {}).length;
+  return (
+    <Section title="Instance">
+      <div className="component-info">
+        <Diamond size={12} color="var(--component)" />
+        <span className="name">{main ? displayName(main) : node.instance!.componentId}</span>
+        <span className="spacer" />
+        <span className="muted small">{overrides ? `${overrides} overridden` : 'No overrides'}</span>
+      </div>
+      <div className="btn-row">
+        <button type="button" className="btn small" title="Select the main component" onClick={() => reveal(doc, node.instance!.componentId)}>
+          <CornerUpRight size={I} /> Main
+        </button>
+        <button type="button" className="btn small" disabled={!overrides} title="Clear this instance's overrides" onClick={() => resetOverrides([node.id])}>
+          <RotateCcw size={I} /> Reset
+        </button>
+        <button type="button" className="btn small" title="Turn into plain layers (Ctrl Alt B)" onClick={() => detachInstances([node.id])}>
+          <Unlink size={I} /> Detach
+        </button>
+      </div>
     </Section>
   );
 }

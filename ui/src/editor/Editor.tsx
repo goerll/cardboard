@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Code2, Frame, Hand, ImagePlus, MousePointer2, PanelLeft, Redo2, SmilePlus, Square, Type, Undo2, X } from 'lucide-react';
 import { call, getState, request, subscribe } from '../api';
 import type { CardboardDocument } from '../types';
@@ -8,6 +8,7 @@ import { copyHtml, Inspector, pickImage, storeImage } from './Inspector';
 import { LeftPanel } from './LeftPanel';
 import { edit, editorState, engineRef, select, setEditor, toast, useEditor } from './store';
 import { Popover, Select } from '../ui/controls';
+import { componentRole, createComponent, detachInstances, resetOverrides, reveal, sourceLayer } from './components';
 
 export function Editor({ fileId, doc, canUndo, canRedo }: { fileId: string; doc: CardboardDocument; canUndo: boolean; canRedo: boolean }) {
   const panels = useEditor((s) => s.panels);
@@ -240,6 +241,13 @@ function Shortcuts({ doc }: { doc: CardboardDocument }) {
       if (mod && (k === '=' || k === '+')) return handled(), engine?.zoomAt(1.25);
       if (mod && k === '-') return handled(), engine?.zoomAt(0.8);
       if (mod && k === '0') return handled(), engine?.zoomTo(1);
+      if (mod && e.altKey && (e.code === 'KeyK' || e.code === 'KeyB')) {
+        handled();
+        const ids = sel.filter((id) => index.nodes.has(id));
+        if (e.code === 'KeyK') createComponent(ids.filter((id) => !componentRole(index.nodes.get(id)!)));
+        else detachInstances(ids.filter((id) => componentRole(index.nodes.get(id)!) === 'instance'));
+        return;
+      }
       if (mod && k === 'g') {
         handled();
         if (e.shiftKey) return ungroup(doc);
@@ -460,6 +468,14 @@ async function ungroup(doc: CardboardDocument) {
   select(kids);
 }
 
+/** Move top-level artboards to another page, keeping their ids. */
+async function moveToPage(doc: CardboardDocument, ids: string[], pageId: string) {
+  const roots = ids.filter((id) => activePage(doc).artboards.some((a) => a.id === id));
+  if (!roots.length) return;
+  await edit([{ tool: 'move_nodes', args: { moves: roots.map((nodeId) => ({ nodeId, parentId: 'root', pageId })) } }]);
+  toast(`Moved to ${doc.pages.find((p) => p.id === pageId)?.name ?? 'page'}`);
+}
+
 function ContextMenu({ doc }: { doc: CardboardDocument }) {
   const menu = useEditor((s) => s.menu);
   const anchor = useRef<HTMLDivElement>(null);
@@ -498,6 +514,28 @@ function ContextMenu({ doc }: { doc: CardboardDocument }) {
               {item('Duplicate', 'Ctrl D', () => edit([{ tool: 'duplicate_nodes', args: { nodes: sel.map((id) => ({ id })) } }]))}
               {item('Group', 'Ctrl G', () => group(doc), !index.parents.get(node.id))}
               {item('Ungroup', 'Ctrl Shift G', () => ungroup(doc), !index.parents.get(node.id) || !node.children.length)}
+              <div className="menu-sep" />
+              {componentRole(node) === 'instance' ? (
+                <>
+                  {item('Go to main component', '', () => reveal(doc, node.instance!.componentId))}
+                  {item('Reset overrides', '', () => resetOverrides(sel.filter((id) => index.nodes.get(id)?.instance)))}
+                  {item('Detach instance', 'Ctrl Alt B', () => detachInstances(sel.filter((id) => componentRole(index.nodes.get(id)!) === 'instance')))}
+                </>
+              ) : componentRole(node) === 'inner' ? (
+                item('Go to main layer', '', () => reveal(doc, sourceLayer(node.id)))
+              ) : (
+                item('Create component', 'Ctrl Alt K', () => createComponent(sel.filter((id) => !componentRole(index.nodes.get(id)!))), componentRole(node) === 'main')
+              )}
+              {doc.pages.length > 1 && !index.parents.get(node.id) && (
+                <>
+                  <div className="menu-sep" />
+                  {doc.pages
+                    .filter((p) => p.id !== doc.activePage)
+                    .map((p) => (
+                      <Fragment key={p.id}>{item(`Move to ${p.name}`, '', () => moveToPage(doc, sel, p.id))}</Fragment>
+                    ))}
+                </>
+              )}
               <div className="menu-sep" />
               {item('Bring forward', 'Ctrl ]', () => reorder(doc, 1, false))}
               {item('Send backward', 'Ctrl [', () => reorder(doc, -1, false))}
@@ -680,6 +718,7 @@ const SHORTCUTS: [string, string][] = [
   ['Next / previous sibling', 'Tab / Shift Tab'],
   ['Duplicate', 'Ctrl D, or Alt drag'],
   ['Group / Ungroup', 'Ctrl G / Ctrl Shift G'],
+  ['Create component / Detach instance', 'Ctrl Alt K / Ctrl Alt B'],
   ['Add flex', 'Shift A'],
   ['Clip content', 'Alt C'],
   ['Hide / Lock', 'Ctrl Shift H / Ctrl Shift L'],

@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod components;
 pub mod doctor;
 pub mod document;
 pub mod fonts;

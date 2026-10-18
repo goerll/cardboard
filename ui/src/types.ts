@@ -15,6 +15,10 @@ export interface DesignNode {
   position?: [number, number];
   /** Sanitized inner SVG of an icon layer (an `<svg>` with no child nodes). */
   markup?: string;
+  /** A main component; instances copy its subtree. */
+  component?: boolean;
+  /** An instance. Its layers are a materialized copy of the main with ids `<instanceId>:<mainLayerId>`. */
+  instance?: { componentId: string; overrides?: Record<string, unknown> };
 }
 
 export interface Page {

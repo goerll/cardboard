@@ -1,0 +1,425 @@
+use cardboard::{
+    document::{Document, Node, Store},
+    html, tools,
+};
+use serde_json::{Value, json};
+
+fn edit(s: &mut Store, name: &str, args: Value) -> Value {
+    tools::call(s, name, &args).unwrap()
+}
+fn doc(s: &Store) -> &Document {
+    s.file(s.active_file.as_ref().unwrap()).unwrap()
+}
+fn node<'a>(s: &'a Store, id: &str) -> &'a Node {
+    doc(s).node(id).unwrap()
+}
+fn artboard(s: &mut Store, name: &str) -> String {
+    edit(
+        s,
+        "create_artboard",
+        json!({"name":name,"styles":{"width":"800px","height":"600px"}}),
+    )["nodeId"]
+        .as_str()
+        .unwrap()
+        .into()
+}
+fn insert(s: &mut Store, parent: &str, html: &str) -> Vec<String> {
+    serde_json::from_value(
+        edit(
+            s,
+            "write_html",
+            json!({"html":html,"targetNodeId":parent,"mode":"insert-children"}),
+        )["nodeIds"]
+            .clone(),
+    )
+    .unwrap()
+}
+fn instance(s: &mut Store, component: &str, parent: &str) -> String {
+    edit(
+        s,
+        "insert_instance",
+        json!({"componentId":component,"parentId":parent}),
+    )["nodeId"]
+        .as_str()
+        .unwrap()
+        .into()
+}
+
+/// A frame with a "Button" component (a button holding a label span) and its label id.
+fn button(s: &mut Store) -> (String, String, String) {
+    let frame = artboard(s, "Screen");
+    let main = insert(
+        s,
+        &frame,
+        "<button layer-name=\"Button\" style=\"padding:8px;background:#222\"><span style=\"color:white\">Save</span></button>",
+    )[0]
+    .clone();
+    let label = node(s, &main).children[0].id.clone();
+    edit(s, "create_component", json!({"nodeId":main}));
+    (frame, main, label)
+}
+
+#[test]
+fn instances_render_the_main_and_follow_its_edits() {
+    let mut s = Store::memory();
+    let (frame, main, label) = button(&mut s);
+    let a = instance(&mut s, &main, &frame);
+    let b = instance(&mut s, &main, &frame);
+    let inner = format!("{a}:{label}");
+    assert_eq!(node(&s, &a).name, "Button");
+    assert_eq!(node(&s, &inner).text, "Save");
+    assert_eq!(
+        html::document_html(doc(&s), false)
+            .matches(">Save</span>")
+            .count(),
+        3
+    );
+
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[main],"styles":{"background":"#0a6"}}]}),
+    );
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":label,"textContent":"Submit"}]}),
+    );
+    for id in [&a, &b] {
+        assert_eq!(node(&s, id).styles["background"], "#0a6");
+        assert_eq!(node(&s, &format!("{id}:{label}")).text, "Submit");
+    }
+    let info = edit(&mut s, "get_basic_info", json!({}));
+    assert_eq!(info["components"][0]["componentId"], json!(main));
+    assert_eq!(info["components"][0]["instances"], 2);
+    let tree = edit(&mut s, "get_tree_summary", json!({"nodeId":frame}))["tree"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(tree.contains(&format!("[{main}] (component)")));
+    assert!(tree.contains(&format!("[{a}] (instance of {main})")));
+    assert!(
+        edit(&mut s, "get_jsx", json!({"nodeId":a}))["jsx"]
+            .as_str()
+            .unwrap()
+            .contains("{\"Submit\"}")
+    );
+}
+
+#[test]
+fn overrides_survive_main_edits() {
+    let mut s = Store::memory();
+    let (frame, main, label) = button(&mut s);
+    let a = instance(&mut s, &main, &frame);
+    let inner = format!("{a}:{label}");
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":inner,"textContent":"Cancel"}]}),
+    );
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[inner],"styles":{"color":"red"}},{"nodeIds":[a],"styles":{"padding":""}}]}),
+    );
+    edit(
+        &mut s,
+        "set_attributes",
+        json!({"updates":[{"nodeId":a,"attributes":{"title":"Close"}}]}),
+    );
+    let overrides = &node(&s, &a).instance.as_ref().unwrap().overrides;
+    assert_eq!(overrides[&label].text.as_deref(), Some("Cancel"));
+    assert_eq!(overrides[&main].styles["padding"], "");
+
+    // Main edits to overridden properties don't win; other properties still flow through.
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":label,"textContent":"Submit"}]}),
+    );
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[label],"styles":{"color":"blue","fontWeight":"600"}},{"nodeIds":[main],"styles":{"padding":"12px","borderRadius":"6px"}}]}),
+    );
+    let n = node(&s, &inner);
+    assert_eq!(n.text, "Cancel");
+    assert_eq!(n.styles["color"], "red");
+    assert_eq!(n.styles["font-weight"], "600");
+    let root = node(&s, &a);
+    assert!(!root.styles.contains_key("padding"));
+    assert_eq!(root.styles["border-radius"], "6px");
+    assert_eq!(root.attributes["title"], "Close");
+
+    // A layer added to the main shows up in instances, and overrides stay attached.
+    insert(&mut s, &main, "<span>!</span>");
+    assert_eq!(node(&s, &a).children.len(), 2);
+    assert_eq!(node(&s, &inner).text, "Cancel");
+
+    edit(&mut s, "reset_overrides", json!({"nodeIds":[a]}));
+    assert_eq!(node(&s, &inner).text, "Submit");
+    assert_eq!(node(&s, &a).styles["padding"], "12px");
+}
+
+#[test]
+fn instance_structure_is_locked_but_layers_can_be_hidden() {
+    let mut s = Store::memory();
+    let (frame, main, label) = button(&mut s);
+    let a = instance(&mut s, &main, &frame);
+    let inner = format!("{a}:{label}");
+    let before = doc(&s).clone();
+    for (tool, args) in [
+        ("delete_nodes", json!({"nodeIds":[inner]})),
+        (
+            "write_html",
+            json!({"html":"<i>x</i>","targetNodeId":a,"mode":"insert-children"}),
+        ),
+        (
+            "move_nodes",
+            json!({"moves":[{"nodeId":inner,"parentId":frame}]}),
+        ),
+        (
+            "insert_instance",
+            json!({"componentId":main,"parentId":main}),
+        ),
+        ("create_component", json!({"nodeId":inner})),
+    ] {
+        assert!(tools::call(&mut s, tool, &args).is_err(), "{tool}");
+        assert_eq!(*doc(&s), before, "{tool}");
+    }
+    edit(
+        &mut s,
+        "set_node_state",
+        json!({"updates":[{"nodeId":inner,"visible":false}]}),
+    );
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[main],"styles":{"gap":"4px"}}]}),
+    );
+    assert!(!node(&s, &inner).visible);
+}
+
+#[test]
+fn detaching_or_deleting_the_main_keeps_the_look() {
+    let mut s = Store::memory();
+    let (frame, main, label) = button(&mut s);
+    let a = instance(&mut s, &main, &frame);
+    let b = instance(&mut s, &main, &frame);
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":format!("{a}:{label}"),"textContent":"Cancel"}]}),
+    );
+    edit(&mut s, "detach_instance", json!({"nodeIds":[a]}));
+    let detached = node(&s, &a).clone();
+    assert!(detached.instance.is_none());
+    assert_eq!(detached.children[0].text, "Cancel");
+    assert!(!detached.children[0].id.contains(':'));
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[main],"styles":{"background":"red"}}]}),
+    );
+    assert_eq!(node(&s, &a).styles["background"], "#222");
+    assert_eq!(node(&s, &b).styles["background"], "red");
+
+    edit(&mut s, "delete_nodes", json!({"nodeIds":[main]}));
+    let orphan = node(&s, &b);
+    assert!(orphan.instance.is_none());
+    assert_eq!(orphan.styles["background"], "red");
+    assert_eq!(orphan.children[0].text, "Save");
+    edit(&mut s, "undo", json!({}));
+    assert!(node(&s, &b).instance.is_some());
+    assert!(node(&s, &main).component);
+}
+
+#[test]
+fn duplicates_of_instances_stay_linked_and_copies_of_mains_are_plain() {
+    let mut s = Store::memory();
+    let (frame, main, label) = button(&mut s);
+    let a = instance(&mut s, &main, &frame);
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":format!("{a}:{label}"),"textContent":"Cancel"}]}),
+    );
+    let dups = edit(
+        &mut s,
+        "duplicate_nodes",
+        json!({"nodes":[{"id":a},{"id":main}]}),
+    )["duplicates"]
+        .clone();
+    let (copy, main_copy) = (
+        dups[0]["nodeId"].as_str().unwrap(),
+        dups[1]["nodeId"].as_str().unwrap(),
+    );
+    assert_eq!(node(&s, &format!("{copy}:{label}")).text, "Cancel");
+    assert!(!node(&s, main_copy).component);
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[label],"styles":{"color":"gold"}}]}),
+    );
+    assert_eq!(node(&s, &format!("{copy}:{label}")).styles["color"], "gold");
+    assert_eq!(node(&s, main_copy).children[0].styles["color"], "white");
+}
+
+#[test]
+fn nested_instances_update_through_their_containing_component() {
+    let mut s = Store::memory();
+    let (frame, button_main, label) = button(&mut s);
+    let card = insert(
+        &mut s,
+        &frame,
+        "<div layer-name=\"Card\"><p>Title</p></div>",
+    )[0]
+    .clone();
+    let nested = instance(&mut s, &button_main, &card);
+    edit(&mut s, "create_component", json!({"nodeId":card}));
+    let outer = instance(&mut s, &card, &frame);
+    let deep = format!("{outer}:{nested}:{label}");
+    assert_eq!(node(&s, &deep).text, "Save");
+
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":label,"textContent":"Buy"}]}),
+    );
+    assert_eq!(node(&s, &deep).text, "Buy");
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":deep,"textContent":"Buy now"}]}),
+    );
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[label],"styles":{"color":"gold"}}]}),
+    );
+    assert_eq!(node(&s, &deep).text, "Buy now");
+    assert_eq!(node(&s, &deep).styles["color"], "gold");
+
+    // A component that would contain itself is rejected.
+    assert!(
+        tools::call(
+            &mut s,
+            "insert_instance",
+            &json!({"componentId":card,"parentId":card})
+        )
+        .is_err()
+    );
+
+    // Detaching the outer instance keeps the nested button linked, with its text change.
+    edit(&mut s, "detach_instance", json!({"nodeIds":[outer]}));
+    let inner_button = node(&s, &outer)
+        .children
+        .iter()
+        .find(|c| c.instance.is_some())
+        .unwrap()
+        .id
+        .clone();
+    assert!(!inner_button.contains(':'));
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[label],"styles":{"color":"pink"}}]}),
+    );
+    let text = node(&s, &format!("{inner_button}:{label}"));
+    assert_eq!(text.text, "Buy now");
+    assert_eq!(text.styles["color"], "pink");
+}
+
+#[test]
+fn artboards_move_and_copy_across_pages() {
+    let mut s = Store::memory();
+    let (frame, main, _) = button(&mut s);
+    let a = instance(&mut s, &main, &frame);
+    let page = edit(&mut s, "create_page", json!({"name":"Two"}))["pageId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let copy = edit(
+        &mut s,
+        "duplicate_nodes",
+        json!({"nodes":[{"id":frame,"pageId":page}]}),
+    )["duplicates"][0]["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let d = doc(&s);
+    let two = d.pages.iter().find(|p| p.id == page).unwrap();
+    assert_eq!(two.artboards[0].id, copy);
+    let copied_instance = two.artboards[0]
+        .children
+        .iter()
+        .find(|c| c.instance.is_some())
+        .unwrap()
+        .id
+        .clone();
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[main],"styles":{"background":"teal"}}]}),
+    );
+    assert_eq!(node(&s, &copied_instance).styles["background"], "teal");
+
+    // Moving a whole artboard to another page keeps ids; the instance inside keeps following.
+    let other = artboard(&mut s, "Other");
+    edit(
+        &mut s,
+        "move_nodes",
+        json!({"moves":[{"nodeId":other,"parentId":"root","pageId":page}]}),
+    );
+    let two = doc(&s).pages.iter().find(|p| p.id == page).unwrap();
+    assert_eq!(two.artboards.len(), 2);
+    assert_eq!(two.artboards[1].position.unwrap()[0], 880.0);
+    edit(
+        &mut s,
+        "move_nodes",
+        json!({"moves":[{"nodeId":a,"parentId":other}]}),
+    );
+    assert_eq!(node(&s, &a).styles["background"], "teal");
+    edit(&mut s, "undo", json!({}));
+    edit(&mut s, "undo", json!({}));
+    assert_eq!(doc(&s).pages[0].artboards.len(), 2);
+}
+
+#[test]
+fn components_are_one_undo_step_in_a_batch_and_survive_a_save() {
+    let dir =
+        std::env::temp_dir().join(format!("cardboard-test-components-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("design.cardboard");
+    let mut s = Store::open_document(&path).unwrap();
+    let frame = artboard(&mut s, "Screen");
+    let chip = insert(&mut s, &frame, "<span>Chip</span>")[0].clone();
+    let revision = doc(&s).revision;
+    let result = edit(
+        &mut s,
+        "batch",
+        json!({"operations":[
+            {"tool":"create_component","args":{"nodeId":chip,"name":"Chip"}},
+            {"tool":"insert_instance","args":{"componentId":chip,"parentId":frame}},
+        ]}),
+    );
+    let a = result["results"][1]["nodeId"].as_str().unwrap().to_owned();
+    assert_eq!(doc(&s).revision, revision + 1);
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":a,"textContent":"Other"}]}),
+    );
+    let reopened = Store::open_document(&path).unwrap();
+    let saved = reopened
+        .file(reopened.active_file.as_ref().unwrap())
+        .unwrap();
+    assert_eq!(saved, doc(&s));
+    assert_eq!(saved.node(&a).unwrap().text, "Other");
+    edit(&mut s, "undo", json!({}));
+    edit(&mut s, "undo", json!({}));
+    assert!(!node(&s, &chip).component);
+    assert!(doc(&s).node(&a).is_err());
+    std::fs::remove_dir_all(dir).unwrap();
+}

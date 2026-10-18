@@ -4,6 +4,7 @@
   --accent: #3b82f6;
   --accent-soft: rgba(59, 130, 246, 0.14);
   --danger: #e5484d;
+  --component: #8b5cf6;
 
   --app: #f6f6f6;
   --chrome: #ededed;
@@ -49,6 +50,7 @@
     --popover: #262626;
     --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px rgba(0, 0, 0, 0.5);
     --checker: #3a3a3a;
+    --component: #a78bfa;
     color-scheme: dark;
   }
 }
@@ -73,6 +75,7 @@
   --popover: #262626;
   --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px rgba(0, 0, 0, 0.5);
   --checker: #3a3a3a;
+  --component: #a78bfa;
   color-scheme: dark;
 }
 
@@ -1143,6 +1146,34 @@ kbd {
 }
 .layer-row {
   padding-right: 4px;
+}
+.layer-row.role-main .row-icon,
+.layer-row.role-main .row-name,
+.layer-row.role-instance .row-icon,
+.layer-row.role-instance .row-name,
+.layer-row.role-inner .row-icon {
+  color: var(--component);
+}
+.component-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.component-info .name {
+  color: var(--component);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.btn-row .btn {
+  flex: 1;
 }
 .layer-row.hidden-layer .row-name,
 .layer-row.hidden-layer .row-icon {

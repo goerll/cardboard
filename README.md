@@ -120,7 +120,7 @@ Cardboard is young. Linux is where it's used day to day; the macOS and Windows b
 
 - Undo history lives in memory for the session.
 - Each edit sends the whole document to the UI. Fine up to a few thousand layers; diffs are the next step.
-- No snapping guides, components or raster export yet.
+- No snapping guides, component variants or raster export yet.
 
 ## License
 

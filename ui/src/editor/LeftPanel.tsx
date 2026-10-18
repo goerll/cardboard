@@ -22,6 +22,8 @@ import {
   Spline,
   Trash2,
   Copy,
+  Component,
+  Diamond,
 } from 'lucide-react';
 import type { CardboardDocument, DesignNode } from '../types';
 import { activePage, ancestors, displayName, indexPage, layerKind, type LayerKind } from '../lib/tree';
@@ -30,6 +32,7 @@ import { edit, engineRef, select, setEditor, useEditor } from './store';
 import { IconButton, Popover, Segmented, TextField } from '../ui/controls';
 import { ColorRow } from '../ui/ColorPicker';
 import { parseColor } from '../lib/css';
+import { componentRole } from './components';
 
 const KIND_ICON: Record<LayerKind, React.ReactNode> = {
   frame: <Frame size={13} />,
@@ -340,10 +343,13 @@ const LayerRow = memo(function LayerRow(props: {
   const [renaming, setRenaming] = useState(false);
   const kind = layerKind(node, props.artboard);
   const label = displayName(node);
+  const role = componentRole(node);
+  const icon = role === 'main' ? <Component size={13} /> : role === 'instance' ? <Diamond size={12} /> : KIND_ICON[kind];
   return (
     <div
       data-layer={node.id}
-      className={`tree-row layer-row ${props.selected ? 'selected' : ''} ${props.parentSelected ? 'child-of-selected' : ''} ${!node.visible ? 'hidden-layer' : ''} ${props.drop ? `drop-${props.drop}` : ''}`}
+      title={role === 'main' ? 'Main component' : role === 'instance' ? 'Instance' : undefined}
+      className={`tree-row layer-row ${props.selected ? 'selected' : ''} ${props.parentSelected ? 'child-of-selected' : ''} ${!node.visible ? 'hidden-layer' : ''} ${props.drop ? `drop-${props.drop}` : ''} ${role ? `role-${role}` : ''}`}
       style={{ paddingLeft: 8 + depth * 14 }}
       onClick={props.onSelect}
       onDoubleClick={(e) => {
@@ -362,7 +368,7 @@ const LayerRow = memo(function LayerRow(props: {
       >
         {node.children.length > 0 && (props.open ? <ChevronDown size={12} /> : <ChevronRight size={12} />)}
       </span>
-      <span className="row-icon">{KIND_ICON[kind]}</span>
+      <span className="row-icon">{icon}</span>
       {renaming ? (
         <TextField
           className="row-input"

@@ -158,10 +158,13 @@ Changed existing tools:
   (`src/import.rs`). `layer-name="..."` sets `Node.name`;
   `hidden` hides; `id` attributes are kept (SVG gradients/clip paths reference them).
 * `create_artboard`: optional `x`, `y` set `position`.
-* `move_nodes`: moving to `root` accepts optional `x`, `y`; moving into a node clears `position`.
+* `move_nodes`: moving to `root` accepts optional `x`, `y` and `pageId` (moves whole artboards
+  between pages, placed right of that page's artboards unless `x`/`y` are given); moving into a
+  node clears `position`. A `parentId` node may be on any page.
 * `duplicate_nodes`: without `parentId`, the copy goes right after its source; duplicated
   artboards are placed 80px right of the rightmost artboard.
-  Optional per-node `index`, `x`/`y` (artboards) and `styles` overrides (empty string removes)
+  Optional per-node `pageId` (copy to another page; parentId defaults to `root` there),
+  `index`, `x`/`y` (artboards) and `styles` overrides (empty string removes)
   let the UI do alt-drag duplicate as one undo step.
 * `create_file`/`open_file` and every other library tool also change tabs, so `workspace` is pushed.
 

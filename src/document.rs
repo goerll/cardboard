@@ -25,6 +25,40 @@ pub struct Node {
     /// Sanitized inner SVG of an icon layer (see `icons`), rendered as this `<svg>`'s content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub markup: Option<String>,
+    /// This node is a main component; instances copy its subtree.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub component: bool,
+    /// This node is an instance; its subtree is a materialized copy of the main (see components.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<Instance>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Instance {
+    pub component_id: String,
+    /// Per-layer changes, keyed by the id of the corresponding layer in the main component.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub overrides: BTreeMap<String, Override>,
+}
+
+/// Properties an instance layer changes relative to its main. Empty strings in `styles` and
+/// `attributes` mean the instance removed that declaration.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Override {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub styles: Styles,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attributes: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
 }
 
 impl Node {
@@ -41,6 +75,8 @@ impl Node {
             visible: true,
             position: None,
             markup: None,
+            component: false,
+            instance: None,
         }
     }
     pub fn find(&self, id: &str) -> Option<&Node> {
@@ -171,13 +207,7 @@ impl Document {
     }
     pub fn clone_node(&mut self, id: &str) -> Result<Node> {
         let mut node = self.node(id)?.clone();
-        fn rekey(doc: &mut Document, n: &mut Node) {
-            n.id = doc.allocate();
-            for child in &mut n.children {
-                rekey(doc, child);
-            }
-        }
-        rekey(self, &mut node);
+        crate::components::rekey(self, &mut node);
         Ok(node)
     }
     pub fn validate(&self) -> Result<()> {
@@ -246,13 +276,14 @@ impl Document {
         for face in &self.fonts {
             crate::fonts::validate(face)?;
         }
-        Ok(())
+        crate::components::validate(self)
     }
     pub fn info(&self) -> Value {
         json!({"fileId": self.id, "fileName": self.name, "revision": self.revision,
             "pageId": self.active_page, "pages": self.pages.iter().map(|p| json!({"id":p.id,"name":p.name,"isActive":p.id==self.active_page})).collect::<Vec<_>>(),
             "nodeCount": self.pages.iter().flat_map(|p| &p.artboards).map(Node::count).sum::<usize>(),
             "artboards": self.pages.iter().flat_map(|p| p.artboards.iter().map(move |n| json!({"id":n.id,"name":n.name,"pageId":p.id,"width":n.styles.get("width"),"height":n.styles.get("height")}))).collect::<Vec<_>>(),
-            "tokens": self.tokens, "fonts": crate::fonts::summary(&self.fonts)})
+            "tokens": self.tokens, "fonts": crate::fonts::summary(&self.fonts),
+            "components": crate::components::summary(self)})
     }
 }

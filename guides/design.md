@@ -96,8 +96,17 @@ type, not three tints of the same layout.
 - One visual group per `write_html` call: a nav bar, a heading block, one card, one row, a
   footer. If a call is getting past roughly fifteen lines of HTML, split it. Seeing a design
   grow piece by piece is more pleasant and easier to steer than waiting for a finished block.
-- Reuse instead of retyping. Build one row or card, then `duplicate_nodes` it and adjust copies
-  with `set_text_content` and `update_styles`.
+- Reuse instead of retyping. Anything that repeats (buttons, list rows, cards, nav items,
+  badges) should be a component: build one, call `create_component` on it, then place copies
+  with `insert_instance`. Change a copy's text or styles with `set_text_content` and
+  `update_styles` on its layers (ids look like `node-12:node-5`); those changes are overrides
+  and survive later edits to the main. To change every copy at once, edit the main. Layers
+  can't be added or removed inside an instance; hide them with `set_node_state` or
+  `detach_instance` when one copy really needs a different structure. Use `duplicate_nodes`
+  for one-off variations that shouldn't stay linked.
+- Keep shared components somewhere obvious, like a "Components" page.
+  `duplicate_nodes` and `move_nodes` take a `pageId`, so artboards can be copied or moved
+  between pages.
 - Restructure with `move_nodes`. It keeps layer ids stable; deleting and rewriting HTML breaks
   every reference you or the person had.
 - Group related edits with `batch` so they become a single undo step. Reads can go in a batch

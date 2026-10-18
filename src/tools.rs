@@ -1,11 +1,11 @@
 use crate::{
-    assets,
+    assets, components,
     document::{Document, Node, Result, Store, Styles},
     html, presence, stock,
 };
 use serde_json::{Value, json};
 
-pub const INSTRUCTIONS: &str = "Cardboard is a local HTML/CSS design editor; the person sees your edits live and shares your undo history (undo only reverts your own latest edit). Before anything else, read get_guide with topic cardboard-design. Start with get_basic_info and get_selection, and pass fileId and pageId explicitly. Post a short design plan before starting something new, add one visual group per write_html call, reuse layers with duplicate_nodes and move_nodes, and use the file's tokens. Most tools report authored CSS; use screenshot to see your work and get_bounds to measure it after each visual group, and only claim visual checks you actually looked at. Edited layers are marked as yours and other agents can't change them; call finish_working_on_nodes when done.";
+pub const INSTRUCTIONS: &str = "Cardboard is a local HTML/CSS design editor; the person sees your edits live and shares your undo history (undo only reverts your own latest edit). Before anything else, read get_guide with topic cardboard-design. Start with get_basic_info and get_selection, and pass fileId and pageId explicitly. Post a short design plan before starting something new, add one visual group per write_html call, make repeated UI a component (create_component, insert_instance) and reuse layers with duplicate_nodes and move_nodes, and use the file's tokens. Most tools report authored CSS; use screenshot to see your work and get_bounds to measure it after each visual group, and only claim visual checks you actually looked at. Edited layers are marked as yours and other agents can't change them; call finish_working_on_nodes when done.";
 pub const GUIDE: &str = include_str!("../guides/design.md");
 
 pub fn string<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
@@ -40,15 +40,31 @@ fn node_info(n: &Node) -> Value {
     if n.markup.is_some() {
         info["icon"] = json!(n.attributes.get("data-icon"));
     }
+    if n.component {
+        info["isComponent"] = json!(true);
+    }
+    if let Some(i) = &n.instance {
+        info["instanceOf"] = json!(i.component_id);
+        info["overrides"] = json!(i.overrides);
+    }
     info
+}
+/// " (component)" / " (instance of node-4)" markers for compact listings.
+fn component_mark(n: &Node) -> String {
+    match (&n.instance, n.component) {
+        (Some(i), _) => format!(" (instance of {})", i.component_id),
+        (None, true) => " (component)".into(),
+        _ => String::new(),
+    }
 }
 fn tree(n: &Node, depth: usize, prefix: usize, result: &mut String) {
     result.push_str(&format!(
-        "{}{} {} [{}]\n",
+        "{}{} {} [{}]{}\n",
         "  ".repeat(prefix),
         n.tag,
         n.name,
-        n.id
+        n.id,
+        component_mark(n)
     ));
     if depth > 0 {
         for c in &n.children {
@@ -531,6 +547,10 @@ pub const MUTATIONS: &[&str] = &[
     "set_active_page",
     "insert_icon",
     "remove_font",
+    "create_component",
+    "insert_instance",
+    "detach_instance",
+    "reset_overrides",
 ];
 
 pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
@@ -700,7 +720,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
                 let result = if READS.contains(&tool) {
                     read(doc, tool, &op_args, asset_dir.as_deref()).map(Option::unwrap)
                 } else if MUTATIONS.contains(&tool) {
-                    mutate(doc, tool, &op_args)
+                    apply(doc, tool, &op_args)
                 } else {
                     return Err(format!(
                         "{tool} cannot run inside batch: batch takes one file's edits and reads \
@@ -714,7 +734,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
             Ok(json!({"results":results}))
         })?,
         _ if MUTATIONS.contains(&name) => store.transaction(&id, |doc| {
-            let value = mutate(doc, name, args)?;
+            let value = apply(doc, name, args)?;
             externalize(doc)?;
             Ok(value)
         })?,
@@ -907,6 +927,33 @@ fn read(
     }))
 }
 
+/// Run one editing tool, then bring component instances in line with their mains.
+fn apply(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
+    let before = components::snapshot(doc);
+    let result = mutate(doc, name, args)?;
+    components::reconcile(doc, before.as_ref())?;
+    Ok(result)
+}
+
+/// Where a top-level copy lands on `page` when no x/y is given: right of the rightmost artboard.
+fn place_right(doc: &Document, page: &str, y: f64) -> Option<[f64; 2]> {
+    let page = doc.pages.iter().find(|p| p.id == page)?;
+    crate::store::artboard_frames(page)
+        .iter()
+        .map(|f| f.0 + f.2)
+        .reduce(f64::max)
+        .map(|right| [right + 80.0, y])
+}
+fn xy(v: &Value) -> Option<[f64; 2]> {
+    match (
+        v.get("x").and_then(Value::as_f64),
+        v.get("y").and_then(Value::as_f64),
+    ) {
+        (Some(x), Some(y)) => Some([x, y]),
+        _ => None,
+    }
+}
+
 fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
     match name {
         "select_nodes" => {
@@ -995,14 +1042,8 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             page.id = format!("page-{}", doc.next_id);
             doc.next_id += 1;
             page.name = format!("{} copy", page.name);
-            fn rekey(doc: &mut Document, n: &mut Node) {
-                n.id = doc.allocate();
-                for c in &mut n.children {
-                    rekey(doc, c);
-                }
-            }
             for n in &mut page.artboards {
-                rekey(doc, n);
+                components::rekey(doc, n);
             }
             let id = page.id.clone();
             doc.pages.insert(index + 1, page);
@@ -1214,11 +1255,19 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             let mut result = vec![];
             for spec in array(args, "nodes")? {
                 let source = string(spec, "id")?;
-                let page = page_for(doc, source)?;
+                let source_page = page_for(doc, source)?;
+                let page = match spec.get("pageId").and_then(Value::as_str) {
+                    Some(p) => {
+                        doc.page_mut(p)?;
+                        p.to_owned()
+                    }
+                    None => source_page.clone(),
+                };
                 let explicit = spec
                     .get("parentId")
                     .and_then(Value::as_str)
-                    .map(String::from);
+                    .map(String::from)
+                    .or_else(|| (page != source_page).then(|| "root".into()));
                 let parent = explicit
                     .clone()
                     .or_else(|| parent_id(doc, source))
@@ -1238,19 +1287,22 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                     None
                 };
                 if parent == "root" {
-                    let page_ref = doc.pages.iter().find(|p| p.id == page).unwrap();
+                    let page_ref = doc.pages.iter().find(|p| p.id == source_page).unwrap();
                     let frames = crate::store::artboard_frames(page_ref);
                     if let Some(i) = page_ref.artboards.iter().position(|n| n.id == source) {
                         let (x, y, w, _) = frames[i];
                         let right = frames.iter().map(|f| f.0 + f.2).fold(x + w, f64::max);
-                        node.position = Some([right + 80.0, y]);
+                        node.position = Some(if page == source_page {
+                            [right + 80.0, y]
+                        } else {
+                            place_right(doc, &page, y).unwrap_or([x, y])
+                        });
                     }
-                    if let (Some(x), Some(y)) = (
-                        spec.get("x").and_then(Value::as_f64),
-                        spec.get("y").and_then(Value::as_f64),
-                    ) {
-                        node.position = Some([x, y]);
+                    if let Some(p) = xy(spec) {
+                        node.position = Some(p);
                     }
+                } else {
+                    node.position = None;
                 }
                 if let Some(styles) = spec.get("styles").and_then(Value::as_object) {
                     for (k, v) in styles {
@@ -1272,7 +1324,14 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
         "move_nodes" => {
             for movement in array(args, "moves")? {
                 let source = string(movement, "nodeId")?;
-                let page = page_for(doc, source)?;
+                let source_page = page_for(doc, source)?;
+                let page = match movement.get("pageId").and_then(Value::as_str) {
+                    Some(p) => {
+                        doc.page_mut(p)?;
+                        p.to_owned()
+                    }
+                    None => source_page.clone(),
+                };
                 let parent = string(movement, "parentId")?;
                 if doc.node(source)?.contains(parent) {
                     return Err("A node cannot be moved inside itself or a descendant".into());
@@ -1283,11 +1342,14 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                 let mut node = doc.detach(source)?;
                 if parent != "root" {
                     node.position = None;
-                } else if let (Some(x), Some(y)) = (
-                    movement.get("x").and_then(Value::as_f64),
-                    movement.get("y").and_then(Value::as_f64),
-                ) {
-                    node.position = Some([x, y]);
+                } else if let Some(p) = xy(movement) {
+                    node.position = Some(p);
+                } else if page != source_page {
+                    // Keep the artboard's place on the canvas unless it would land on others.
+                    let y = node.position.map_or(0.0, |p| p[1]);
+                    if let Some(p) = place_right(doc, &page, y) {
+                        node.position = Some(p);
+                    }
                 }
                 insert(
                     doc,
@@ -1389,6 +1451,58 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                 return Err(format!("This file has no font family {family:?}"));
             }
             Ok(json!({"removed":family}))
+        }
+        "create_component" => {
+            let id = string(args, "nodeId")?;
+            let node = doc.node_mut(id)?;
+            if components::is_inner(id) {
+                return Err(format!(
+                    "{id} is a layer inside an instance; detach_instance first or use the main component"
+                ));
+            }
+            if node.instance.is_some() {
+                return Err(format!(
+                    "{id} is already an instance; detach_instance first or wrap it in a frame"
+                ));
+            }
+            node.component = true;
+            if let Some(name) = args.get("name").and_then(Value::as_str) {
+                node.name = name.into();
+            }
+            Ok(json!({"componentId":id}))
+        }
+        "insert_instance" => {
+            let component = string(args, "componentId")?;
+            let parent = string(args, "parentId")?;
+            let mut node = components::instantiate(doc, component)?;
+            let page = match args.get("pageId").and_then(Value::as_str) {
+                Some(p) => p.to_owned(),
+                None if parent == "root" => doc.active_page.clone(),
+                None => page_for(doc, parent)?,
+            };
+            if parent == "root" {
+                node.position = xy(args).or_else(|| place_right(doc, &page, 0.0));
+            } else {
+                node.position = None;
+            }
+            let id = node.id.clone();
+            let index = args
+                .get("index")
+                .and_then(Value::as_u64)
+                .map(|i| i as usize);
+            insert(doc, parent, &page, node, index)?;
+            Ok(json!({"nodeId":id,"pageId":page}))
+        }
+        "detach_instance" | "reset_overrides" => {
+            let ids = string_ids(args, "nodeIds")?;
+            for id in &ids {
+                if name == "detach_instance" {
+                    components::detach(doc, id)?;
+                } else {
+                    components::reset(doc, id)?;
+                }
+            }
+            Ok(json!({"nodeIds":ids}))
         }
         _ => Err(format!("Unknown tool: {name}")),
     }
@@ -1542,15 +1656,15 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "duplicate_nodes",
-        "Clone nodes with new stable identifiers; optionally supply parentId, index, x/y (artboards) and style overrides.",
-        json!({"nodes":{"type":"array","items":{"type":"object","properties":{"id":s,"parentId":s,"index":{"type":"integer","minimum":0},"x":{"type":"number"},"y":{"type":"number"},"styles":{"type":"object","additionalProperties":{"type":"string"}}},"required":["id"],"additionalProperties":false}}}),
+        "Clone nodes with new stable identifiers; optionally supply parentId, pageId (copy to another page; parentId defaults to root there), index, x/y (artboards) and style overrides. Copies of a main component are plain layers; copies of instances stay linked.",
+        json!({"nodes":{"type":"array","items":{"type":"object","properties":{"id":s,"parentId":s,"pageId":s,"index":{"type":"integer","minimum":0},"x":{"type":"number"},"y":{"type":"number"},"styles":{"type":"object","additionalProperties":{"type":"string"}}},"required":["id"],"additionalProperties":false}}}),
         vec!["nodes", "fileId"],
         false,
     );
     add(
         "move_nodes",
-        "Reparent nodes while retaining identifiers. parentId root moves a node to its current page; index controls sibling order.",
-        json!({"moves":{"type":"array","items":{"type":"object","properties":{"nodeId":s,"parentId":s,"index":{"type":"integer","minimum":0},"x":{"type":"number"},"y":{"type":"number"}},"required":["nodeId","parentId"],"additionalProperties":false}}}),
+        "Reparent nodes while retaining identifiers. parentId root moves a node to the top level of its current page, or of pageId (moves whole artboards between pages); index controls sibling order.",
+        json!({"moves":{"type":"array","items":{"type":"object","properties":{"nodeId":s,"parentId":s,"pageId":s,"index":{"type":"integer","minimum":0},"x":{"type":"number"},"y":{"type":"number"}},"required":["nodeId","parentId"],"additionalProperties":false}}}),
         vec!["moves", "fileId"],
         false,
     );
@@ -1749,6 +1863,34 @@ pub fn definitions() -> Vec<Value> {
         json!({"query":s,"count":{"type":"integer","minimum":1,"maximum":30},"orientation":{"type":"string","enum":["landscape","portrait","squarish"]},"provider":{"type":"string","enum":["unsplash","openverse"]}}),
         vec!["query"],
         true,
+    );
+    add(
+        "create_component",
+        "Turn an existing layer into a main component. Then place copies with insert_instance: edits to the main reach every instance, and each instance keeps its own text, style and attribute overrides.",
+        json!({"nodeId":s,"name":s}),
+        vec!["nodeId", "fileId"],
+        false,
+    );
+    add(
+        "insert_instance",
+        "Insert an instance of a component into parentId (\"root\" for a top-level frame on pageId) at index. Instance layers are real nodes with ids <instanceId>:<mainLayerId>; edit them with update_styles, set_text_content, set_attributes or set_node_state to override. Layers cannot be added, removed or moved inside an instance.",
+        json!({"componentId":s,"parentId":s,"pageId":s,"index":{"type":"integer","minimum":0},"x":{"type":"number"},"y":{"type":"number"}}),
+        vec!["componentId", "parentId", "fileId"],
+        false,
+    );
+    add(
+        "detach_instance",
+        "Turn instances into plain layers that look the same and no longer follow the main.",
+        json!({"nodeIds":ids}),
+        vec!["nodeIds", "fileId"],
+        false,
+    );
+    add(
+        "reset_overrides",
+        "Clear every override of the given instances so they match their main component again.",
+        json!({"nodeIds":ids}),
+        vec!["nodeIds", "fileId"],
+        false,
     );
     add(
         "batch",

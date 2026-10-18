@@ -25,6 +25,7 @@ Control lines (`{"cardboard":"status"}`, `{"cardboard":"handover"}`) sent as the
 | Read document | `get_selection`, `get_node_info`, `get_children`, `get_tree_summary`, `get_styles`, `find_nodes`, `get_document` |
 | Pages and artboards | `create_page`, `rename_pages`, `create_artboard` |
 | Edit nodes | `write_html`, `update_styles`, `set_text_content`, `rename_nodes`, `delete_nodes`, `duplicate_nodes`, `move_nodes` |
+| Components | `create_component`, `insert_instance`, `detach_instance`, `reset_overrides` (see `docs/components.md`) |
 | Tokens | `get_tokens`, `create_tokens`, `set_tokens` |
 | Icons | `search_icons`, `insert_icon` |
 | Images | `import_image`, `search_images` |
