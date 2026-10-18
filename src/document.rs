@@ -167,14 +167,31 @@ impl Document {
             .iter()
             .flat_map(|p| &p.artboards)
             .find_map(|n| n.find(id))
-            .ok_or_else(|| format!("Node {id} does not exist in this file"))
+            .ok_or_else(|| self.missing(id))
     }
     pub fn node_mut(&mut self, id: &str) -> Result<&mut Node> {
+        // Only instance-layer ids get the longer hint, so ordinary lookups stay one pass.
+        if crate::components::is_inner(id) {
+            self.node(id)?;
+        }
         self.pages
             .iter_mut()
             .flat_map(|p| &mut p.artboards)
             .find_map(|n| n.find_mut(id))
             .ok_or_else(|| format!("Node {id} does not exist in this file"))
+    }
+    /// Not-found error; for a `<instanceId>:<layer>` id it says how instance layers are named.
+    fn missing(&self, id: &str) -> String {
+        if let Some((prefix, _)) = id.split_once(':')
+            && let Ok(n) = self.node(prefix)
+            && let Some(i) = &n.instance
+        {
+            return format!(
+                "Node {id} does not exist in this file. {prefix} is an instance of {}: its root is {prefix} and its inner layers are {prefix}:<main layer id>, where the main layer id is a descendant of {}",
+                i.component_id, i.component_id
+            );
+        }
+        format!("Node {id} does not exist in this file")
     }
     pub fn page_mut(&mut self, id: &str) -> Result<&mut Page> {
         self.pages

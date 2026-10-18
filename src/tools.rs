@@ -331,6 +331,37 @@ pub(crate) fn normalize_ids(v: &mut Value) {
     }
 }
 
+/// Replace `<instanceId>:<mainRootId>` ids with the instance id (see `components::root_alias`),
+/// in the same id-bearing arguments `normalize_ids` looks at.
+fn resolve_aliases(doc: &Document, v: &mut Value) {
+    fn fix(doc: &Document, v: &mut Value) {
+        match v {
+            Value::String(s) => {
+                if let Some(root) = components::root_alias(doc, s) {
+                    *s = root;
+                }
+            }
+            Value::Array(items) => items.iter_mut().for_each(|v| fix(doc, v)),
+            _ => {}
+        }
+    }
+    match v {
+        Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                match k.as_str() {
+                    "nodeId" | "nodeIds" | "targetNodeId" | "parentId" | "componentId" | "id" => {
+                        fix(doc, v)
+                    }
+                    "styles" | "attributes" | "tokens" | "html" => {}
+                    _ => resolve_aliases(doc, v),
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|v| resolve_aliases(doc, v)),
+        _ => {}
+    }
+}
+
 /// Default output budget for text-heavy reads, sized to fit an agent's tool-result window.
 const MAX_CHARS: usize = 50_000;
 fn max_chars(args: &Value) -> usize {
@@ -609,6 +640,11 @@ pub const MUTATIONS: &[&str] = &[
 pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
     let mut args = args.clone();
     normalize_ids(&mut args);
+    if let Ok(file) = store.file_id(&args)
+        && let Ok(doc) = store.file(&file)
+    {
+        resolve_aliases(doc, &mut args);
+    }
     let args = &args;
     if needs_network(name, args) {
         let ctx = context(store, args);

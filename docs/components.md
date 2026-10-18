@@ -12,7 +12,9 @@ cases.
   subtree is a *materialized* copy of the main: real nodes that are saved, rendered and exported
   like any other. The instance root keeps its own id; each inner layer gets the id
   `<instanceId>:<mainLayerId>`, e.g. `node-12:node-5`. Ids are stable across main edits, so
-  selections and agent references survive.
+  selections and agent references survive. Since no layer carries `<instanceId>:<mainRootId>`, tools accept it as an
+  alias for the instance root (`node-12:node-4` means `node-12`), and an unknown
+  `<instanceId>:...` id fails with an error that spells out the naming.
 * **Overrides** are keyed by the main layer's id and hold only what the instance changed:
   `name`, `text`, `styles`, `attributes` (an empty string means "removed here"), `visible`,
   `locked`. The instance root's name, lock, visibility and canvas position are its own.

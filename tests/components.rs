@@ -539,3 +539,33 @@ fn icon_layers_inside_components_follow_the_main() {
     let html = html::nodes_html(doc(&s), vec![node(&s, &a)], false);
     assert!(html.contains("<circle"), "{html}");
 }
+
+#[test]
+fn instance_root_answers_to_its_layer_style_id() {
+    let mut s = Store::memory();
+    let (frame, main, label) = button(&mut s);
+    let a = instance(&mut s, &main, &frame);
+    // Inner layers are a:<layer>, so agents guess a:<main> for the root; it means the root.
+    let alias = format!("{a}:{main}");
+    edit(
+        &mut s,
+        "batch",
+        json!({"operations":[
+            {"tool":"update_styles","args":{"updates":[{"nodeIds":[alias],"styles":{"background":"#eee"}}]}},
+            {"tool":"set_text_content","args":{"updates":[{"nodeId":format!("{a}:{label}"),"textContent":"Cancel"}]}},
+            {"tool":"rename_nodes","args":{"updates":[{"nodeId":alias,"name":"Cancel button"}]}}
+        ]}),
+    );
+    assert_eq!(node(&s, &a).styles["background"], "#eee");
+    assert_eq!(node(&s, &a).name, "Cancel button");
+    let info = edit(&mut s, "get_node_info", json!({"nodeId":alias}));
+    assert_eq!(info["id"], json!(a));
+    // A wrong inner id says how instance layers are named.
+    let err = tools::call(
+        &mut s,
+        "update_styles",
+        &json!({"updates":[{"nodeIds":[format!("{a}:node-999")],"styles":{"color":"red"}}]}),
+    )
+    .unwrap_err();
+    assert!(err.contains(&format!("its root is {a}")), "{err}");
+}

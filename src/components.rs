@@ -16,6 +16,14 @@ pub fn is_inner(id: &str) -> bool {
     id.contains(':')
 }
 
+/// Agents name an instance root the way its inner layers are named, `<instanceId>:<mainRootId>`.
+/// No layer carries that id (the root is the bare instance id), so it resolves unambiguously.
+pub fn root_alias(doc: &Document, id: &str) -> Option<String> {
+    let (prefix, key) = id.rsplit_once(':')?;
+    let i = doc.node(prefix).ok()?.instance.as_ref()?;
+    (i.component_id == key && doc.node(id).is_err()).then(|| prefix.into())
+}
+
 fn walk<'a>(n: &'a Node, f: &mut impl FnMut(&'a Node)) {
     f(n);
     for c in &n.children {
