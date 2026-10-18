@@ -164,7 +164,8 @@ row of icon cards, and nothing on the page is memorable. Plan against those up f
   and survive later edits to the main. To change every copy at once, edit the main. Layers
   can't be added or removed inside an instance; hide them with `set_node_state` or
   `detach_instance` when one copy really needs a different structure. Use `duplicate_nodes`
-  for one-off variations that shouldn't stay linked.
+  for one-off variations that shouldn't stay linked. Each copy can show its own icon:
+  `insert_icon` with `nodeId` set to the copy's icon layer swaps it as an override.
 - Keep shared components somewhere obvious, like a "Components" page.
   `duplicate_nodes` and `move_nodes` take a `pageId`, so artboards can be copied or moved
   between pages.

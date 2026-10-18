@@ -1061,6 +1061,62 @@ fn apply(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
     Ok(result)
 }
 
+/// `insert_icon` with `nodeId`: give an existing icon layer another icon, keeping its id, size,
+/// color and other styles unless the call sets them. On an instance layer this is an override.
+fn swap_icon(doc: &mut Document, args: &Value) -> Result<Value> {
+    let id = string(args, "nodeId")?;
+    if args.get("targetNodeId").is_some() {
+        return Err(
+            "Pass nodeId to swap an existing icon or targetNodeId to add one, not both".into(),
+        );
+    }
+    let old = doc.node(id)?;
+    if old.markup.is_none() {
+        return Err(format!(
+            "{id} is not an icon layer; nodeId swaps the icon of an existing icon layer (use targetNodeId to add one)"
+        ));
+    }
+    let old_short = old
+        .attributes
+        .get("data-icon")
+        .and_then(|n| n.split_once(':'))
+        .map(|(_, short)| short.to_owned());
+    let opt = |k: &str| args.get(k).map(css_value).transpose();
+    let (size, stroke_width, color) = (opt("size")?, opt("strokeWidth")?, opt("color")?);
+    let fresh = crate::icons::node(
+        doc,
+        string(args, "icon")?,
+        crate::icons::Options {
+            size: size.as_deref(),
+            stroke_width: stroke_width.as_deref(),
+            color: color.as_deref(),
+        },
+    )?;
+    let node = doc.node_mut(id)?;
+    node.markup = fresh.markup;
+    for k in ["viewBox", "data-icon"] {
+        node.attributes
+            .insert(k.into(), fresh.attributes[k].clone());
+    }
+    let mut keys = vec![];
+    if size.is_some() {
+        keys.extend(["width", "height"]);
+    }
+    if color.is_some() {
+        keys.push("color");
+    }
+    for k in keys {
+        node.styles.insert(k.into(), fresh.styles[k].clone());
+    }
+    // A layer still named after its old icon takes the new icon's name.
+    match args.get("name").and_then(Value::as_str) {
+        Some(name) => node.name = name.into(),
+        None if old_short.as_ref() == Some(&node.name) => node.name = fresh.name,
+        None => {}
+    }
+    Ok(json!({"nodeId":id}))
+}
+
 /// Where a top-level copy lands on `page` when no x/y is given: right of the rightmost artboard.
 fn place_right(doc: &Document, page: &str, y: f64) -> Option<[f64; 2]> {
     let page = doc.pages.iter().find(|p| p.id == page)?;
@@ -1714,6 +1770,7 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             }
             Ok(json!({"pageId":page,"nodeIds":ids,"modes":modes}))
         }
+        "insert_icon" if args.get("nodeId").is_some() => swap_icon(doc, args),
         "insert_icon" => {
             // Same placement rules as write_html; the icon becomes one layer.
             let opt = |k: &str| args.get(k).map(css_value).transpose();
@@ -2241,9 +2298,9 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "insert_icon",
-        "Insert an icon from a real icon set as ONE layer (placement like write_html, default mode insert-children). size is px or a CSS length (default 24); strokeWidth works for outline sets (lucide, tabler); color defaults to currentColor so the icon follows the text color. Recolor later with update_styles color, resize with width/height. Inside write_html you can also write <icon name=\"lucide:check\" size=\"16\" stroke-width=\"1.5\" color=\"var(--accent)\" style=\"...\" />.",
-        json!({"icon":s,"targetNodeId":s,"mode":{"type":"string","enum":["insert-children","insert-before","insert-after","replace"]},"index":{"type":"integer","minimum":0},"size":{"type":["number","string"]},"strokeWidth":{"type":["number","string"]},"color":s,"name":s}),
-        vec!["icon", "targetNodeId", "fileId"],
+        "Insert an icon from a real icon set as ONE layer (placement like write_html, default mode insert-children). size is px or a CSS length (default 24); strokeWidth works for outline sets (lucide, tabler); color defaults to currentColor so the icon follows the text color. Recolor later with update_styles color, resize with width/height. Inside write_html you can also write <icon name=\"lucide:check\" size=\"16\" stroke-width=\"1.5\" color=\"var(--accent)\" style=\"...\" />. To swap the icon of an existing icon layer instead, pass nodeId (not targetNodeId): the layer keeps its id, size and color unless you set them, and on a layer inside an instance (<instanceId>:<mainLayerId>) the new icon is an override that survives edits to the main, e.g. a different icon per feature row.",
+        json!({"icon":s,"targetNodeId":s,"nodeId":{"type":"string","description":"Existing icon layer to give this icon, instead of inserting a new layer"},"mode":{"type":"string","enum":["insert-children","insert-before","insert-after","replace"]},"index":{"type":"integer","minimum":0},"size":{"type":["number","string"]},"strokeWidth":{"type":["number","string"]},"color":s,"name":s}),
+        vec!["icon", "fileId"],
         false,
     );
     add(

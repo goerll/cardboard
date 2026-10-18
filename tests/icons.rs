@@ -308,3 +308,112 @@ fn find_nodes_and_claims_understand_icon_layers() {
     // Path data is not text: searching it finds nothing.
     assert_eq!(edit(&mut s, "find_nodes", json!({"text":"M5"}))["total"], 0);
 }
+
+#[test]
+fn instances_swap_icons_as_overrides_that_survive_main_edits() {
+    let (mut s, frame) = setup();
+    let row = edit(
+        &mut s,
+        "write_html",
+        json!({"targetNodeId":frame,"mode":"insert-children","html":"<div layer-name=\"Feature\" style=\"display:flex;gap:8px\"><icon name=\"lucide:arrow-right\" size=\"20\" color=\"red\" /><span>Fast</span></div>"}),
+    )["nodeIds"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let file = s.active_file.clone().unwrap();
+    let icon = s.file(&file).unwrap().node(&row).unwrap().children[0]
+        .id
+        .clone();
+    edit(&mut s, "create_component", json!({"nodeId":row}));
+    let a = edit(
+        &mut s,
+        "insert_instance",
+        json!({"componentId":row,"parentId":frame}),
+    )["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let inner = format!("{a}:{icon}");
+    let swapped = edit(
+        &mut s,
+        "insert_icon",
+        json!({"nodeId":inner,"icon":"mdi:star"}),
+    );
+    assert_eq!(swapped["nodeId"], json!(inner));
+    let doc = s.file(&file).unwrap();
+    let (main_icon, copy) = (doc.node(&icon).unwrap(), doc.node(&inner).unwrap());
+    assert_eq!(copy.attributes["data-icon"], "mdi:star");
+    assert_eq!(
+        (copy.name.as_str(), copy.styles["width"].as_str()),
+        ("star", "20px")
+    );
+    assert_eq!(copy.styles["color"], "red");
+    assert_ne!(copy.markup, main_icon.markup);
+    assert_eq!(main_icon.attributes["data-icon"], "lucide:arrow-right");
+    let o = &doc.node(&a).unwrap().instance.as_ref().unwrap().overrides[&icon];
+    assert!(o.markup.is_some() && o.attributes["data-icon"] == "mdi:star");
+    let saved = serde_json::to_value(doc).unwrap().to_string();
+    let reloaded: cardboard::document::Document = serde_json::from_str(&saved).unwrap();
+    reloaded.validate().unwrap();
+    assert_eq!(
+        reloaded
+            .node(&a)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .overrides[&icon],
+        *o
+    );
+
+    // A main edit (recolor) reaches the copy; its own icon stays.
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[icon],"styles":{"color":"blue"}}]}),
+    );
+    let copy = s.file(&file).unwrap().node(&inner).unwrap().clone();
+    assert_eq!(copy.styles["color"], "blue");
+    assert_eq!(copy.attributes["data-icon"], "mdi:star");
+    assert!(html::document_html(s.file(&file).unwrap(), false).contains("M12 2l3 7h7"));
+    // Swapping the main's icon reaches instances that kept the main's.
+    let b = edit(
+        &mut s,
+        "insert_instance",
+        json!({"componentId":row,"parentId":frame}),
+    )["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    edit(
+        &mut s,
+        "insert_icon",
+        json!({"nodeId":icon,"icon":"logos:wide"}),
+    );
+    let doc = s.file(&file).unwrap();
+    assert_eq!(
+        doc.node(&format!("{b}:{icon}")).unwrap().attributes["data-icon"],
+        "logos:wide"
+    );
+    assert_eq!(
+        doc.node(&inner).unwrap().attributes["data-icon"],
+        "mdi:star"
+    );
+    // Undo restores the main's old icon; reset drops the instance's own.
+    edit(&mut s, "undo", json!({}));
+    edit(&mut s, "reset_overrides", json!({"nodeIds":[a]}));
+    let doc = s.file(&file).unwrap();
+    assert_eq!(
+        doc.node(&inner).unwrap().attributes["data-icon"],
+        "lucide:arrow-right"
+    );
+    let label = format!("{a}:{}", doc.node(&row).unwrap().children[1].id);
+    // Only icon layers can be swapped.
+    let err = tools::call(
+        &mut s,
+        "insert_icon",
+        &json!({"nodeId":label,"icon":"mdi:star"}),
+    )
+    .unwrap_err();
+    assert!(err.contains("not an icon layer"), "{err}");
+}

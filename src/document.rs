@@ -59,6 +59,10 @@ pub struct Override {
     pub visible: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
+    /// A swapped icon: the instance layer's `Node.markup` (its `viewBox` and `data-icon` are
+    /// ordinary attribute overrides).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub markup: Option<String>,
 }
 
 impl Node {

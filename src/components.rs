@@ -128,6 +128,12 @@ impl Override {
         if let Some(v) = self.locked {
             n.locked = v;
         }
+        // Only icon layers take markup, and stored markup is re-checked by `Document::validate`.
+        if let Some(v) = &self.markup
+            && n.markup.is_some()
+        {
+            n.markup = Some(v.clone());
+        }
         for (map, patch) in [
             (&mut n.styles, &self.styles),
             (&mut n.attributes, &self.attributes),
@@ -170,6 +176,7 @@ impl Override {
                 .then(|| changed(&n.visible, &main.visible))
                 .flatten(),
             locked: (!root).then(|| changed(&n.locked, &main.locked)).flatten(),
+            markup: changed(&n.markup, &main.markup).flatten(),
         }
     }
 }
@@ -361,6 +368,9 @@ fn prune(
         }
         if same(&o.locked, &m.locked, was.locked.is_some()) {
             o.locked = None;
+        }
+        if o.markup.is_some() && o.markup == m.markup && was.markup.is_none() {
+            o.markup = None;
         }
         for (patch, main, was) in [
             (&mut o.styles, &m.styles, &was.styles),

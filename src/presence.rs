@@ -150,6 +150,7 @@ fn targets(doc: &Document, name: &str, args: &Value) -> Vec<(String, Reach)> {
                 _ => Node,
             };
             out.extend(id(args, "targetNodeId").map(|t| (t, reach)));
+            out.extend(id(args, "nodeId").map(|t| (t, Node)));
         }
         "update_styles" | "set_attributes" => {
             for u in updates(args) {

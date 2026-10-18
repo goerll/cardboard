@@ -17,7 +17,7 @@ cases.
   `<instanceId>:...` id fails with an error that spells out the naming.
 * **Overrides** are keyed by the main layer's id and hold only what the instance changed:
   `name`, `text`, `styles`, `attributes` (an empty string means "removed here"), `visible`,
-  `locked`. The instance root's name, lock, visibility and canvas position are its own.
+  `locked`, and `markup` for an icon layer whose icon was swapped. The instance root's name, lock, visibility and canvas position are its own.
 
 ```json
 { "id": "node-12", "tag": "button", "name": "Cancel button",
@@ -47,6 +47,13 @@ calls `components::reconcile`:
 3. Mains are ordered so nested components update first, then every instance is rebuilt from its
    main plus its overrides. Main edits therefore reach all instances immediately, and overridden
    properties keep the instance's value.
+
+Icons are single layers, so swapping one is an edit, not a structure change:
+`insert_icon {nodeId, icon}` on an instance's icon layer (e.g. `node-12:node-6`) replaces its
+markup, `viewBox` and `data-icon`, keeps its size and color unless the call sets them, and folds
+into a `markup` override plus attribute overrides. A feature-row component can then show a
+different icon in each copy; swapping or restyling the main's icon still reaches copies that
+didn't override it, and `reset_overrides` brings the main's icon back.
 
 Structure belongs to the main: adding, removing, moving or replacing layers inside an instance is
 rejected with an error that points to the alternatives (edit the main, hide the layer with
