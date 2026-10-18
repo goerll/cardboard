@@ -129,8 +129,7 @@ makes a page look machine-made.
 
 - **Headline tricks.** A second line or a single word recolored in the accent, or switched to
   italic, to make it "pop". Refined pages set the headline in one color and get emphasis from
-  scale, weight or a quieter grey continuation (`A new species of product tool.` in white, the
-  rest of the sentence in grey).
+  scale and weight, or let a longer sentence continue in a quieter tone of the same color.
 - **Formula copy.** Every heading a two-beat antithesis or punchline ("One command. Sixty-four
   GPUs.", "Not X. Y.", "Snap it, text it, done."), triplets everywhere, a joke in every subhead.
   Write most headings as plain statements of what the product does; save the one clever line for
@@ -166,7 +165,9 @@ When every section exists, stop adding. Screenshot the hero on its own and the w
 and go through it as an editor:
 
 1. Name the single most striking thing on the page. If nothing stands out, that's the next fix;
-   if three things compete, quiet two of them.
+   if three things compete, quiet two of them. Restraint isn't blandness: a page made only of flat
+   panels on a plain ground needs one moment of real material (light on the product, a
+   photograph, a rendered object, a saturated band) before it's done.
 2. Walk the list above and remove what it flags: recolored headline words, labels, toasts, extra
    chips, bullet lists, stats rows. Removing elements usually raises quality more than adding.
 3. Unify details: one radius scale, one button style per role, one border color, one icon set and
