@@ -128,10 +128,19 @@ row of icon cards, and nothing on the page is memorable. Plan against those up f
   of ground (a dark or tinted band) to pace the scroll, not every section alternating.
 - **Proof.** A muted row of five to seven customer logos right after the hero, at an even visual
   size. Later, a testimonial with a believable name, role and company, and figures shown big.
-- **One memorable device.** Pick one thing a visitor would remember and carry it through the page:
-  a glow or gradient behind the product, a photograph, a pattern or grid, an illustration style, a
-  display serif. A flat ground with generic cards everywhere looks like a template however
-  clean it is.
+- **One memorable device, drawn from this product.** Pick one thing a visitor would remember and
+  carry it through the page, and find it in the product's own world rather than in a stock of
+  landing-page tricks: a developer tool might live on a dark terminal-black ground, a hardware or
+  travel brand on full-bleed photography, a consumer app on one loud brand color, a finance tool on
+  ruled paper. Glows, patterns, illustration styles and display serifs are all options, not
+  defaults. If your page could swap its logo with another startup's and still make sense, the
+  device isn't specific enough. A flat ground with generic cards everywhere looks like a template
+  however clean it is.
+- **Don't settle into a house style.** The patterns here are about structure, not looks. Light
+  pastel grounds, a serif headline with one italic accent word, a stats column beside a quote and
+  a rounded tinted panel for the closing call are each fine once, but reaching for all of them on
+  every page is a template too. Choose ground (light, dark, photographic, saturated), type voice
+  and the closing layout from the brief each time.
 - **Close and footer.** End with the primary action again under a fresh line, then a quiet, dense
   footer.
 - **Review it like a visitor.** Screenshot the hero section on its own and the whole artboard.
