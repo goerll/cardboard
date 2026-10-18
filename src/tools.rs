@@ -2191,7 +2191,7 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "get_bounds",
-        "Measure rendered layout boxes (x, y, width, height in px relative to the artboard) for nodes and their descendants down to depth (default 1). Flags overflowX/overflowY when content is larger than its box, outsideParent when a box leaves its parent, and hidden. styles lists CSS properties to report as computed values. All nodeIds must share one artboard. Uses the same renderer as screenshot.",
+        "Measure rendered layout boxes (x, y, width, height in px relative to the artboard) for nodes and their descendants down to depth (default 1). Flags overflowX/overflowY when content spills out of its box (glyph overhang under a tight line-height or italics is ignored), clippedX/clippedY instead when the box clips it with overflow hidden/clip/auto, outsideParent when a box leaves a parent that doesn't clip, clippedBy (ancestor id) when a clipping ancestor cuts part of the box off, and hidden. styles lists CSS properties to report as computed values. All nodeIds must share one artboard. Uses the same renderer as screenshot.",
         json!({"nodeIds":ids,"depth":{"type":"integer","minimum":0,"maximum":10},"styles":ids}),
         vec!["nodeIds", "fileId"],
         true,

@@ -240,8 +240,9 @@ boxes. Both render the way the canvas does, with the file's tokens.
   look at it before moving on. Layers come back at 2x, so screenshot a section when a full
   artboard is too small to judge details.
 - Use `get_bounds` for things pixels make easy to miss: `overflowX`/`overflowY` (text or
-  children larger than their box), `outsideParent`, `hidden`, and whether repeated rows share
-  the same x positions. Ask for computed `styles` (say `font-size`, `color`) when the cascade
+  children spilling out of their box), `clippedX`/`clippedY` and `clippedBy` (content cut off
+  by a box with `overflow: hidden`: fine for a cropped photo, a bug for cut-off text),
+  `outsideParent`, `hidden`, and whether repeated rows share the same x positions. Ask for computed `styles` (say `font-size`, `color`) when the cascade
   or tokens might not resolve the way you expect.
 - Review each section against this list and fix what you find: spacing rhythm, type
   hierarchy and readability, contrast, alignment and shared columns, content clipped by the

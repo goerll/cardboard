@@ -1360,6 +1360,57 @@ fn get_bounds_measures_layout_overflow_and_computed_styles() {
 }
 
 #[test]
+fn get_bounds_ignores_glyph_overhang_and_separates_deliberate_clipping() {
+    if !renderer() {
+        return;
+    }
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let ids = insert(
+        &mut s,
+        &frame,
+        concat!(
+            r#"<div style="width:600px"><h1 style="margin:0;font:italic 96px/0.8 serif">Jagged type</h1></div>"#,
+            r#"<div style="width:100px;height:40px;overflow:hidden"><div style="width:200px;height:80px;flex:none"></div></div>"#,
+            r#"<div style="width:120px;height:30px;overflow:hidden"><p style="margin:0;font-size:16px">Long text that wraps over several lines in a small box</p></div>"#,
+            r#"<div style="height:20px;flex:none"><div style="height:60px"></div></div>"#,
+        ),
+    );
+    let bounds = edit(&mut s, "get_bounds", json!({"nodeIds":[frame],"depth":3}));
+    let nodes = bounds["nodes"].as_array().unwrap();
+    let by_id = |id: &str| nodes.iter().find(|n| n["id"] == id).unwrap();
+    let child = |id: &str| {
+        let doc = s.file(&fid(&s)).unwrap();
+        doc.node(id).unwrap().children[0].id.clone()
+    };
+    let keys = |n: &Value| {
+        let mut k: Vec<_> = n.as_object().unwrap().keys().cloned().collect();
+        k.retain(|k| k.starts_with("overflow") || k.starts_with("clipped") || k == "outsideParent");
+        k
+    };
+    // A tight line-height lets descenders poke out of the line box; that is not overflow.
+    assert!(keys(by_id(&frame)).is_empty(), "{}", by_id(&frame));
+    assert!(keys(by_id(&ids[0])).is_empty(), "{}", by_id(&ids[0]));
+    assert!(keys(by_id(&child(&ids[0]))).is_empty());
+    // Deliberate clipping is reported softly, and the clipped child names its clipper.
+    let mask = by_id(&ids[1]);
+    assert_eq!(
+        (mask["clippedX"].as_f64(), mask["clippedY"].as_f64()),
+        (Some(100.0), Some(40.0))
+    );
+    assert_eq!(keys(mask), ["clippedX", "clippedY"]);
+    let photo = by_id(&child(&ids[1]));
+    assert_eq!(photo["clippedBy"], json!(ids[1]));
+    assert!(photo.get("outsideParent").is_none());
+    // Text cut off by a clipping box is still reported.
+    assert!(by_id(&ids[2])["clippedY"].as_f64().unwrap() > 20.0);
+    assert_eq!(by_id(&child(&ids[2]))["clippedBy"], json!(ids[2]));
+    // Visible spill stays overflow.
+    assert_eq!(by_id(&ids[3])["overflowY"], 40.0);
+    assert_eq!(by_id(&child(&ids[3]))["outsideParent"], true);
+}
+
+#[test]
 fn render_tools_accept_bare_ids_outside_tools_call() {
     let mut s = Store::memory();
     let frame = artboard(&mut s);
