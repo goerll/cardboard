@@ -1036,8 +1036,8 @@ impl Updater {
             }
             _ => return Err(format!("unknown update request {tool}")),
         }
-        self.wake();
         self.publish("idle", None);
+        self.wake();
         Ok(self.status())
     }
     /// Call after the window closed: apply a staged update (and relaunch if the user asked for

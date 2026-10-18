@@ -20,6 +20,15 @@ pub fn alive(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
+    // An exited child its parent hasn't reaped yet still answers kill(0) on Linux.
+    if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        && stat
+            .rsplit(')')
+            .next()
+            .is_some_and(|rest| rest.trim_start().starts_with('Z'))
+    {
+        return false;
+    }
     // Signal 0 only checks existence; EPERM means it exists but belongs to another user.
     // SAFETY: kill with signal 0 sends nothing.
     let exists = unsafe { libc::kill(pid, 0) } == 0;

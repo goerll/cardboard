@@ -38,13 +38,22 @@ curl -fsSL https://cardboard.goerll.dev/install.sh | sh
 irm https://cardboard.goerll.dev/install.ps1 | iex
 ```
 
-Run the same command again to update. The installer puts the desktop app where your system expects it (app launcher on Linux, `Applications` on macOS, Start menu on Windows) and the `cardboard` command on your PATH. Prefer to do it by hand? Grab an archive from [Releases](https://github.com/goerll/cardboard/releases/latest).
+The installer puts the desktop app where your system expects it (app launcher on Linux, `Applications` on macOS, Start menu on Windows) and the `cardboard` command on your PATH. Prefer to do it by hand? Grab an archive from [Releases](https://github.com/goerll/cardboard/releases/latest).
 
 | Platform | Build | Installs to |
 | --- | --- | --- |
 | Linux x64 | `cardboard-linux-x64.tar.gz` | `~/.local/share/cardboard` |
 | macOS Apple Silicon / Intel | `cardboard-macos-arm64.zip` / `cardboard-macos-x64.zip` | `/Applications` (or `~/Applications`) |
 | Windows x64 | `cardboard-windows-x64.zip` | `%LOCALAPPDATA%\Programs\Cardboard` |
+
+### Updates
+
+Installed copies keep themselves up to date. The app checks GitHub about once a day, downloads a new release in the background, verifies its signature and shows **Update ready** in the tab bar. Click **Restart** to switch now, or keep working: it installs the next time you quit. The `cardboard` command and the agent relay live in the same folder, so they update together with the app.
+
+- `cardboard update` updates right away (`--check` only looks). `cardboard doctor` shows your version and the latest one.
+- Turn it off in **Settings → Automatic updates**, or set `CARDBOARD_NO_UPDATE=1`.
+- Re-running the install command also updates, and is the way back if something goes wrong.
+- Builds from source never update themselves. Every release archive is signed (minisign, see [docs/releasing.md](docs/releasing.md)) and the app refuses anything that doesn't match the key built into it.
 
 > The macOS build is not notarized by Apple yet. The install script clears the download flag so it opens normally. If you unzip it by hand, right click the app and pick **Open** the first time.
 

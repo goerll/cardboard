@@ -116,10 +116,16 @@ Server → client:
 { "type": "closed", "fileId": "f-.." }
 // library contents changed (create/rename/archive/delete/save of a closed file)
 { "type": "library" }
+// the desktop app's updater status (src/update.rs); not sent by `cardboard serve`
+{ "type": "update", "update": { "state": "ready", "current": "0.2.0", "version": "0.2.1",
+  "notesUrl": "https://github.com/...", "managed": true, "autoUpdate": true } }
 // reply to a request; the server sends any resulting document/workspace pushes BEFORE the result
 { "type": "result", "id": 7, "ok": true, "result": { ... } }
 { "type": "result", "id": 7, "ok": false, "error": "message" }
 ```
+
+`set_auto_update {enabled}`, `check_for_updates` and `restart_to_update` are UI-only requests the
+server hands to the updater; they are not tools and agents can't reach them over MCP.
 
 ## Tools (shared by UI and MCP)
 
@@ -198,3 +204,38 @@ tokio::spawn(cardboard::mcp::serve_socket(listener, hub.clone()));
 
 Selection/page changes still push a `document` message (the "doc" includes `selection` and
 `activePage`) so agents and UI stay in sync.
+
+## Updates
+
+`src/update.rs`, shared by the CLI and the desktop app. Only installs in the folders the install
+scripts use update themselves (`~/.local/share/cardboard/app`, `Cardboard.app` in
+`/Applications` or `~/Applications`, `%LOCALAPPDATA%\Programs\Cardboard`); a dev build says why
+and does nothing.
+
+1. **Check.** The desktop starts an `Updater` thread: at launch unless it checked in the last 4
+   hours, then every 24 hours. It reads `releases/latest` from the GitHub API and picks
+   `cardboard-<os>-<arch>.<ext>` and its `.minisig`. A release without a signature yet counts as
+   not available. Offline, rate limits and errors stay silent and retry in an hour.
+2. **Stage.** Download, verify the signature with the key compiled in from
+   `packaging/update.pub`, and require its trusted comment to be
+   `cardboard file:<asset> version:<version>` for this exact asset and release. Extract with the
+   system `tar` (`ditto` on macOS), check the layout and that the new `cardboard --version`
+   matches, then move it next to the install as `.<name>.new` (same filesystem, so applying is two
+   renames). State lives in `state.json` in a per-user folder (`~/.local/share/cardboard/update`,
+   `~/Library/Application Support/Cardboard/update`, `%LOCALAPPDATA%\Cardboard\update`).
+3. **Apply.** With the app closed: rename the install to `.<name>.old`, the staged copy into
+   place, roll back if the second rename fails, delete the old copy. The desktop copies its CLI
+   to the state folder and starts `cardboard update --apply --root <install> --wait-pid <pid>
+   [--relaunch -- <args>]` detached, then exits; the helper waits, swaps and relaunches. This runs
+   when the user clicks **Restart** in the pill (the server calls the desktop's restart hook,
+   which closes the window like the close button), on quit, or at the next launch before any
+   window opens. On Windows a running `cardboard mcp` relay locks the folder: the helper retries
+   for 10 seconds, then leaves the update staged and the launch fast path waits an hour before
+   trying again, so it never restart-loops. `cardboard update` on macOS and Linux swaps in place
+   (renaming a running program's folder is fine there); with the app open it only stages.
+
+The editor sees the status as an `update` push and shows the pill when it is `ready`.
+`CARDBOARD_NO_UPDATE=1` or the Settings toggle (stored in `state.json`, per machine) turn it
+off. Debug builds also read `CARDBOARD_UPDATE_API`, `CARDBOARD_UPDATE_TEST_KEY` and
+`CARDBOARD_UPDATE_FAKE_READY` for `scripts/e2e_update.sh` and UI checks; release builds trust
+only the embedded key. Releasing and the signing key: [releasing.md](releasing.md).
