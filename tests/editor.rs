@@ -630,3 +630,231 @@ fn alt_drag_duplicate_places_copies_in_one_undo_step() {
     edit(&mut s, "undo", json!({}));
     assert!(s.file(&fid(&s)).unwrap().node(&ab).is_err());
 }
+fn write(s: &mut Store, args: Value) -> Result<Value, String> {
+    tools::call(s, "write_html", &args)
+}
+fn tags(node: &cardboard::document::Node) -> Vec<String> {
+    node.children.iter().map(|n| n.tag.clone()).collect()
+}
+#[test]
+fn real_world_html_imports_like_a_browser() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let result = edit(
+        &mut s,
+        "write_html",
+        json!({"targetNodeId":frame,"mode":"insert-children","html":concat!(
+            "<p>Paper & Ink &mdash; est.&nbsp;2026 &copy 2026</p>",
+            "<ul><li>One<li>Two</ul>",
+            "<div><img src=\"a.png\" alt=Cover><br><span>after</span></div>",
+            "<dl><dt>Term<dd>Definition</dl>",
+            "<figure><picture><source srcset=\"a.avif\"><img src=\"a.png\"></picture><figcaption>Cap</figcaption></figure>",
+            "<div style=\"height:8px\" /><span>sibling</span>",
+            "<label for=email>Email</label><input id=email disabled>",
+        )}),
+    );
+    assert!(result.get("warnings").is_none(), "{result}");
+    let doc = s.file(&fid(&s)).unwrap();
+    let ids: Vec<&str> = result["nodeIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    let node = |i: usize| doc.node(ids[i]).unwrap();
+    assert_eq!(
+        node(0).text,
+        "Paper & Ink \u{2014} est.\u{a0}2026 \u{a9} 2026"
+    );
+    assert_eq!(tags(node(1)), ["li", "li"]);
+    assert_eq!(node(1).children[1].text, "Two");
+    assert_eq!(tags(node(2)), ["img", "br", "span"]);
+    assert_eq!(tags(node(3)), ["dt", "dd"]);
+    assert_eq!(tags(node(4)), ["picture", "figcaption"]);
+    // XML-style self-closing still means an empty element, not an open one.
+    assert!(node(5).children.is_empty());
+    assert_eq!(node(6).text, "sibling");
+    assert_eq!(
+        node(8).attributes.get("disabled").map(String::as_str),
+        Some("")
+    );
+}
+#[test]
+fn unsupported_markup_maps_or_drops_with_warnings() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let result = edit(
+        &mut s,
+        "write_html",
+        json!({"targetNodeId":frame,"mode":"insert-children","html":concat!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>Page</title><style>.a{color:red}</style></head><body>",
+            "<my-card data-x=1><b>Bold</b></my-card>",
+            "<svg viewBox=\"0 0 1 1\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"><filter><feGaussianBlur/></filter><rect/></svg>",
+            "<div itemscope style=\"color:red;background:url(javascript:alert(1))\">x</div>",
+            "</body></html>",
+        )}),
+    );
+    let warnings = result["warnings"].as_array().unwrap();
+    let text = serde_json::to_string(warnings).unwrap();
+    assert!(
+        !text.contains("<meta>") && !text.contains("<title>"),
+        "{text}"
+    );
+    for expected in [
+        "<style>",
+        "<my-card> is not supported; imported as <div>",
+        "<filter>",
+        "itemscope",
+        "background",
+    ] {
+        assert!(text.contains(expected), "missing {expected} in {text}");
+    }
+    let doc = s.file(&fid(&s)).unwrap();
+    let card = doc.node(result["nodeIds"][0].as_str().unwrap()).unwrap();
+    assert_eq!((card.tag.as_str(), card.name.as_str()), ("div", "my-card"));
+    let svg = doc.node(result["nodeIds"][1].as_str().unwrap()).unwrap();
+    assert_eq!(tags(svg), ["rect"]);
+    let html = html::document_html(doc, false);
+    assert!(!html.contains("javascript") && html.contains("color:red"));
+}
+#[test]
+fn lenient_import_keeps_rejecting_active_and_truncated_html() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let before = s.file(&fid(&s)).unwrap().clone();
+    for fragment in [
+        "<img src=x onerror=alert(1)>",
+        "<a href=\"&#106;avascript:alert(1)\">x</a>",
+        "<a href=\" java\tscript:alert(1)\">x</a>",
+        "<object data=\"x.swf\"></object>",
+        "<p>ok</p><script>alert(1)</script>",
+        "<svg><a href=\"javascript:alert(1)\"><rect/></a></svg>",
+        "<section><p>Unclosed section",
+        "<div class=\"cut off",
+        "<div><!-- unterminated",
+    ] {
+        assert!(
+            write(
+                &mut s,
+                json!({"html":fragment,"targetNodeId":frame,"mode":"insert-children"})
+            )
+            .is_err(),
+            "{fragment} was accepted"
+        );
+    }
+    // <animate> could rewrite an href to javascript:; unknown SVG is dropped, never mapped.
+    let result = edit(
+        &mut s,
+        "write_html",
+        json!({"html":"<svg><a><animate attributeName=\"href\" to=\"javascript:alert(1)\"/></a></svg>","targetNodeId":frame,"mode":"insert-children"}),
+    );
+    assert!(
+        result["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("<animate>")
+    );
+    assert!(!html::document_html(s.file(&fid(&s)).unwrap(), false).contains("javascript"));
+    edit(&mut s, "undo", json!({}));
+    assert_eq!(s.file(&fid(&s)).unwrap().pages, before.pages);
+}
+#[test]
+fn write_html_imports_large_files_from_a_path() {
+    let dir = temp_dir("import-path");
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let row = "<div style=\"padding:4px\">Row &amp; item</div>";
+    let big = format!("<section>{}</section>", row.repeat(40_000));
+    assert!(big.len() > 1024 * 1024);
+    assert!(
+        write(
+            &mut s,
+            json!({"html":big,"targetNodeId":frame,"mode":"insert-children"})
+        )
+        .unwrap_err()
+        .contains("path")
+    );
+    let file = dir.join("page.html");
+    std::fs::write(&file, &big).unwrap();
+    let result = edit(
+        &mut s,
+        "write_html",
+        json!({"path":file,"targetNodeId":frame,"mode":"insert-children"}),
+    );
+    let section = s
+        .file(&fid(&s))
+        .unwrap()
+        .node(result["nodeIds"][0].as_str().unwrap())
+        .unwrap();
+    assert_eq!(section.children.len(), 40_000);
+    assert_eq!(section.children[0].text, "Row & item");
+    std::fs::write(dir.join("notes.txt"), "<p>x</p>").unwrap();
+    for (args, message) in [
+        (json!({"path":"page.html"}), "absolute"),
+        (json!({"path":dir.join("notes.txt")}), ".html"),
+        (json!({"path":dir.join("missing.html")}), "Cannot read"),
+        (json!({"path":file,"html":"<p>x</p>"}), "not both"),
+        (json!({}), "html or path"),
+    ] {
+        let mut args = args;
+        args["targetNodeId"] = json!(frame);
+        args["mode"] = json!("insert-children");
+        let error = write(&mut s, args).unwrap_err();
+        assert!(error.contains(message), "{error}");
+    }
+}
+#[test]
+fn insert_index_counts_text_so_zero_lands_before_it() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let button = insert(&mut s, &frame, "<button>Save</button>")[0].clone();
+    let icon = edit(
+        &mut s,
+        "write_html",
+        json!({"html":"<svg viewBox=\"0 0 1 1\"><rect/></svg>","targetNodeId":button,"mode":"insert-children","index":0}),
+    )["nodeIds"][0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let doc = s.file(&fid(&s)).unwrap();
+    let node = doc.node(&button).unwrap();
+    assert_eq!(node.text, "");
+    assert_eq!(tags(node), ["svg", "span"]);
+    assert_eq!(node.children[0].id, icon);
+    assert_eq!(
+        (
+            node.children[1].name.as_str(),
+            node.children[1].text.as_str()
+        ),
+        ("Text", "Save")
+    );
+    assert!(
+        html::document_html(doc, false).contains("<rect></rect></svg><span>Save</span></button>")
+    );
+    // The same holds for moving an existing layer into a text leaf.
+    let label = insert(&mut s, &frame, "<p>Label</p>")[0].clone();
+    let dot = insert(&mut s, &frame, "<i>dot</i>")[0].clone();
+    edit(
+        &mut s,
+        "move_nodes",
+        json!({"moves":[{"nodeId":dot,"parentId":label,"index":0}]}),
+    );
+    let label = s.file(&fid(&s)).unwrap().node(&label).unwrap().clone();
+    assert_eq!(tags(&label), ["i", "span"]);
+    assert_eq!(label.children[1].text, "Label");
+}
+#[test]
+fn misnested_html_is_repaired_the_way_browsers_do() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    insert(
+        &mut s,
+        &frame,
+        "<b>1<p>2</b>3</p><table><tr><td>cell</td></tr>stray</table>",
+    );
+    let html = html::document_html(s.file(&fid(&s)).unwrap(), false);
+    assert!(
+        html.contains("<b>1</b><p><b>2</b><span>3</span></p><span>stray</span><table><tbody><tr><td>cell</td></tr></tbody></table>"),
+        "{html}"
+    );
+}

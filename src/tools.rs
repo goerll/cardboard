@@ -71,6 +71,59 @@ fn page_for(doc: &Document, id: &str) -> Result<String> {
         .map(|p| p.id.clone())
         .ok_or_else(|| format!("Node {id} does not exist"))
 }
+/// Child indexes count text too: a parent's own text becomes a leading "Text" layer before
+/// anything is inserted beside it, so index 0 means before everything.
+fn hoist_text(doc: &mut Document, parent: &str) -> Result<()> {
+    if parent == "root" || doc.node(parent)?.text.is_empty() {
+        return Ok(());
+    }
+    let mut span = Node::new(doc.allocate(), "span", "Text");
+    let node = doc.node_mut(parent)?;
+    span.text = std::mem::take(&mut node.text);
+    node.children.insert(0, span);
+    Ok(())
+}
+/// `write_html` takes inline `html` or an absolute `path` to a local .html/.htm/.svg file.
+fn html_source(args: &Value) -> Result<String> {
+    match (args.get("html"), args.get("path")) {
+        (Some(html), None) => {
+            let html = html.as_str().ok_or("html must be a string")?;
+            if html.len() > crate::import::INLINE_LIMIT {
+                return Err(
+                    "Inline HTML is limited to 1 MiB; write it to a file and pass path".into(),
+                );
+            }
+            Ok(html.into())
+        }
+        (None, Some(path)) => {
+            let path = std::path::Path::new(path.as_str().ok_or("path must be a string")?);
+            if !path.is_absolute() {
+                return Err("path must be absolute".into());
+            }
+            if !path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "html" | "htm" | "svg"))
+            {
+                return Err("path must point to a .html, .htm or .svg file".into());
+            }
+            let size = std::fs::metadata(path)
+                .map_err(|e| format!("Cannot read {}: {e}", path.display()))?
+                .len();
+            if size > crate::import::FILE_LIMIT as u64 {
+                return Err(format!(
+                    "{} is {:.1} MiB; file imports are limited to 8 MiB. Split it into sections.",
+                    path.display(),
+                    size as f64 / 1048576.0
+                ));
+            }
+            std::fs::read_to_string(path)
+                .map_err(|e| format!("Cannot read {}: {e}", path.display()))
+        }
+        (Some(_), Some(_)) => Err("Pass html or path, not both".into()),
+        (None, None) => Err("write_html needs html or path".into()),
+    }
+}
 fn insert(
     doc: &mut Document,
     parent: &str,
@@ -78,6 +131,7 @@ fn insert(
     node: Node,
     index: Option<usize>,
 ) -> Result<()> {
+    hoist_text(doc, parent)?;
     let nodes = if parent == "root" {
         &mut doc.page_mut(page)?.artboards
     } else {
@@ -501,10 +555,13 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
         "write_html" => {
             let target = string(args, "targetNodeId")?;
             doc.node(target)?;
-            let nodes = html::parse_fragment(doc, string(args, "html")?)?;
+            let source = html_source(args)?;
+            let import = crate::import::parse(doc, &source)?;
+            let nodes = import.nodes;
             let ids = nodes.iter().map(|n| n.id.clone()).collect::<Vec<_>>();
             match string(args, "mode")? {
                 "insert-children" => {
+                    hoist_text(doc, target)?;
                     let parent = doc.node_mut(target)?;
                     if html::is_void(&parent.tag) {
                         return Err("Target cannot contain children".into());
@@ -533,7 +590,11 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                     );
                 }
             }
-            Ok(json!({"nodeIds":ids}))
+            let mut result = json!({"nodeIds":ids});
+            if !import.warnings.is_empty() {
+                result["warnings"] = json!(import.warnings);
+            }
+            Ok(result)
         }
         "update_styles" => {
             for update in array(args, "updates")? {
@@ -915,9 +976,9 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "write_html",
-        "Insert one visual group as static, explicitly closed HTML with inline CSS. Preserve existing nodes through move/duplicate instead of rewriting them. Scripts and event handlers are unsupported.",
-        json!({"html":s,"targetNodeId":s,"mode":{"type":"string","enum":["insert-children","insert-before","insert-after","replace"]},"index":{"type":"integer","minimum":0}}),
-        vec!["html", "targetNodeId", "mode", "fileId"],
+        "Insert one visual group as static HTML with inline CSS, parsed like a browser would (named entities, unclosed <p>/<li>, <img> without a slash are fine). Pass html inline, or path (absolute, .html/.htm/.svg, up to 8 MiB) to import a large file without sending it through the chat. Unsupported tags/attributes are mapped or dropped and reported in warnings; scripts, event handlers and javascript: URLs are rejected. index counts every child, text included. Preserve existing nodes through move/duplicate instead of rewriting them.",
+        json!({"html":s,"path":s,"targetNodeId":s,"mode":{"type":"string","enum":["insert-children","insert-before","insert-after","replace"]},"index":{"type":"integer","minimum":0}}),
+        vec!["targetNodeId", "mode", "fileId"],
         false,
     );
     add(

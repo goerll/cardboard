@@ -1,5 +1,4 @@
 use crate::document::{Document, Node, Result, Styles};
-use quick_xml::{Reader, events::Event};
 
 pub fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
@@ -9,7 +8,10 @@ pub fn escape(text: &str) -> String {
         .replace('\'', "&#39;")
 }
 pub fn is_void(tag: &str) -> bool {
-    matches!(tag, "img" | "br" | "hr" | "input" | "wbr" | "source")
+    matches!(
+        tag,
+        "img" | "br" | "hr" | "input" | "wbr" | "source" | "col"
+    )
 }
 pub fn validate_tag(tag: &str) -> Result<()> {
     if matches!(
@@ -86,6 +88,34 @@ pub fn validate_tag(tag: &str) -> Result<()> {
             | "clipPath"
             | "mask"
             | "tspan"
+            | "dl"
+            | "dt"
+            | "dd"
+            | "caption"
+            | "tfoot"
+            | "colgroup"
+            | "col"
+            | "hgroup"
+            | "details"
+            | "summary"
+            | "abbr"
+            | "cite"
+            | "q"
+            | "kbd"
+            | "samp"
+            | "var"
+            | "del"
+            | "ins"
+            | "dfn"
+            | "data"
+            | "fieldset"
+            | "legend"
+            | "form"
+            | "optgroup"
+            | "meter"
+            | "progress"
+            | "search"
+            | "menu"
     ) {
         Ok(())
     } else {
@@ -185,6 +215,34 @@ pub fn validate_attribute(name: &str, value: &str) -> Result<()> {
             | "clipPathUnits"
             | "maskUnits"
             | "maskContentUnits"
+            // Form and list state that real-world HTML carries
+            | "disabled"
+            | "checked"
+            | "selected"
+            | "readonly"
+            | "required"
+            | "multiple"
+            | "for"
+            | "name"
+            | "lang"
+            | "dir"
+            | "tabindex"
+            | "open"
+            | "min"
+            | "max"
+            | "low"
+            | "high"
+            | "optimum"
+            | "step"
+            | "maxlength"
+            | "rows"
+            | "cols"
+            | "span"
+            | "start"
+            | "reversed"
+            | "cite"
+            | "scope"
+            | "label"
     ) || name.starts_with("aria-")
         || name.starts_with("data-"))
     {
@@ -246,7 +304,7 @@ pub fn validate_token(name: &str, value: &str) -> Result<()> {
     }
     validate_style(name, value)
 }
-fn split_declarations(text: &str) -> Result<Vec<&str>> {
+pub(crate) fn split_declarations(text: &str) -> Result<Vec<&str>> {
     let mut parts = vec![];
     let mut start = 0;
     let mut depth = 0i32;
@@ -309,137 +367,12 @@ pub fn parse_styles(text: &str) -> Result<Styles> {
     }
     Ok(result)
 }
+/// Import an HTML fragment, discarding warnings. See [`crate::import::parse`].
 pub fn parse_fragment(doc: &mut Document, html: &str) -> Result<Vec<Node>> {
-    if html.len() > 1024 * 1024 {
+    if html.len() > crate::import::INLINE_LIMIT {
         return Err("HTML import limit is 1 MiB per call".into());
     }
-    let mut reader = Reader::from_str(html);
-    reader.config_mut().check_end_names = true;
-    let mut roots = vec![];
-    let mut stack: Vec<Node> = vec![];
-    let mut text_nodes = std::collections::BTreeSet::new();
-    fn attach(node: Node, stack: &mut [Node], roots: &mut Vec<Node>) {
-        if let Some(parent) = stack.last_mut() {
-            parent.children.push(node);
-        } else {
-            roots.push(node);
-        }
-    }
-    fn append_text(
-        doc: &mut Document,
-        text: String,
-        stack: &mut [Node],
-        roots: &mut Vec<Node>,
-        text_nodes: &mut std::collections::BTreeSet<String>,
-    ) {
-        let nodes = if let Some(parent) = stack.last_mut() {
-            &mut parent.children
-        } else {
-            roots
-        };
-        if let Some(last) = nodes.last_mut()
-            && text_nodes.contains(&last.id)
-        {
-            last.text.push_str(&text);
-        } else {
-            let mut node = Node::new(doc.allocate(), "span", "Text");
-            node.text = text;
-            text_nodes.insert(node.id.clone());
-            nodes.push(node);
-        }
-    }
-    loop {
-        match reader
-            .read_event()
-            .map_err(|e| format!("HTML must be a well-formed static fragment: {e}"))?
-        {
-            event @ (Event::Start(_) | Event::Empty(_)) => {
-                let (e, empty) = match event {
-                    Event::Start(e) => (e, false),
-                    Event::Empty(e) => (e, true),
-                    _ => unreachable!(),
-                };
-                let tag =
-                    String::from_utf8(e.name().as_ref().to_vec()).map_err(|e| e.to_string())?;
-                validate_tag(&tag)?;
-                if stack.len() > 128 {
-                    return Err("HTML nesting limit is 128".into());
-                }
-                if is_void(&tag) && !empty {
-                    return Err(format!("Use <{tag} /> for void elements in this importer"));
-                }
-                let mut node = Node::new(doc.allocate(), &tag, &tag);
-                for a in e.attributes() {
-                    let a = a.map_err(|e| e.to_string())?;
-                    let name = std::str::from_utf8(a.key.as_ref()).map_err(|e| e.to_string())?;
-                    let value = a
-                        .decode_and_unescape_value(reader.decoder())
-                        .map_err(|e| e.to_string())?
-                        .into_owned();
-                    match name {
-                        "style" => node.styles = parse_styles(&value)?,
-                        "layer-name" => node.name = value,
-                        "hidden" => node.visible = false,
-                        "data-cardboard-locked" => node.locked = true,
-                        _ => {
-                            validate_attribute(name, &value)?;
-                            node.attributes.insert(name.into(), value);
-                        }
-                    }
-                }
-                if empty {
-                    attach(node, &mut stack, &mut roots);
-                } else {
-                    stack.push(node);
-                }
-            }
-            Event::End(_) => {
-                let mut node = stack.pop().ok_or("Unexpected closing tag")?;
-                if node.children.len() == 1 && text_nodes.contains(&node.children[0].id) {
-                    node.text = node.children.remove(0).text;
-                }
-                attach(node, &mut stack, &mut roots);
-            }
-            Event::Text(e) => {
-                let text = e.xml_content().map_err(|e| e.to_string())?;
-                if !text.is_empty()
-                    && (!text.trim().is_empty()
-                        || stack
-                            .last()
-                            .is_some_and(|n| n.tag == "pre" || n.tag == "code"))
-                {
-                    append_text(
-                        doc,
-                        text.into_owned(),
-                        &mut stack,
-                        &mut roots,
-                        &mut text_nodes,
-                    );
-                }
-            }
-            Event::GeneralRef(e) => {
-                let name = e.decode().map_err(|e| e.to_string())?;
-                let text = quick_xml::escape::unescape(&format!("&{name};"))
-                    .map_err(|e| e.to_string())?
-                    .into_owned();
-                append_text(doc, text, &mut stack, &mut roots, &mut text_nodes);
-            }
-            Event::Comment(_) => {}
-            Event::Eof => break,
-            _ => {
-                return Err(
-                    "Document declarations and processing instructions are not supported".into(),
-                );
-            }
-        }
-    }
-    if !stack.is_empty() {
-        return Err(
-            "Unclosed HTML element. Close elements explicitly; use <img /> for void elements."
-                .into(),
-        );
-    }
-    Ok(roots)
+    crate::import::parse(doc, html).map(|i| i.nodes)
 }
 pub fn node_html(node: &Node, editor: bool) -> String {
     let mut out = format!("<{}", node.tag);

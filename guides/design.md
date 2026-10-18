@@ -119,9 +119,20 @@ trailing elements sit on the same vertical lines.
 
 ## 8. What the HTML importer accepts
 
-Static HTML fragments with inline `style` attributes and static SVG. Close every element
-explicitly and self-close void elements (`<img />`, `<br />`). Scripts, event handlers and
-external stylesheets are rejected. Classes are kept as metadata but don't apply styles.
+Write HTML the way you normally would. `write_html` parses it like a browser: named entities
+(`&nbsp;`, `&mdash;`, a bare `&` in "Paper & Ink"), `<img>` and `<br>` without a slash, and
+unclosed `<p>`/`<li>` all work. Styling comes from inline `style` attributes only; `<style>`
+blocks and stylesheets are ignored, and classes are kept as metadata but don't apply styles.
+
+- Read the `warnings` in the result. Unknown tags become a `<div>` or `<span>` (the layer keeps
+  the original tag name), unsupported attributes, SVG elements and CSS declarations are dropped,
+  and each case is listed so you can fix it rather than assume it landed.
+- Scripts, `<iframe>`/`<object>`, event handlers and `javascript:` URLs fail the whole call, as
+  does HTML that looks cut off (an unclosed `<div>` or a tag that never ends).
+- For a big import (a whole page you generated or saved), write it to a file and pass its
+  absolute `path` instead of `html`. Files may be up to 8 MiB; inline `html` up to 1 MiB.
+- `index` in `insert-children` counts every child, text included: index 0 puts an icon before
+  a button's label.
 
 ## 9. Check your work
 

@@ -45,7 +45,7 @@ Use the returned `nodeId` in `write_html`:
 }
 ```
 
-`write_html` accepts `insert-children` and `replace`. Replacement produces new identifiers. Duplication recursively assigns new IDs; reparenting retains IDs. IDs are scoped to a file and must not be inferred from examples.
+`write_html` accepts `insert-children`, `insert-before`, `insert-after` and `replace`. Replacement produces new identifiers. Duplication recursively assigns new IDs; reparenting retains IDs. IDs are scoped to a file and must not be inferred from examples.
 
 Example style update:
 
@@ -64,7 +64,8 @@ Style names accept CSS or camelCase spelling and are normalized to CSS names. An
 - Explicit `fileId` is required by schemas for document tools. A relay does not implicitly pin to the currently visible tab. `open_file` changes the active tab; explicit targets remain independent.
 - Batch commands are atomic: any invalid item rejects the whole batch. Successful edits validate the model and save before reporting success. Save errors roll back the model and history.
 - Undo and redo apply to workspace history. Revisions and ID counters remain monotonic. History is limited to 100 in-memory snapshots.
-- Imported designs cannot execute scripts. The importer uses an XML-style static subset and requires closed tags. HTML entities supported by the parser include `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, and numeric references; use numeric references for others.
+- Imported designs cannot execute scripts. `write_html` parses with html5ever (the WHATWG HTML algorithm browsers use), so named entities, unquoted attributes, void elements without `/>` and optional end tags (`p`, `li`, `dt`, `dd`, table rows/cells) are accepted; `<div />` is still read as an empty element. An allowlist then maps unknown tags to `div`/`span`, drops unsupported attributes, SVG elements, `<style>`/`<link>`/`<meta>` and invalid CSS declarations, and reports each in `warnings`. Scripts, active embeds, event handlers, `javascript:` URLs, unclosed block elements at the end and truncated tags are errors.
+- `write_html` takes `html` (up to 1 MiB) or an absolute `path` to a local `.html`/`.htm`/`.svg` file (up to 8 MiB), so large imports don't pass through the chat. `index` counts all children: a target's own text becomes a leading `Text` layer first, so index 0 inserts before it. `move_nodes` and `duplicate_nodes` follow the same rule.
 - `get_styles` reports authored values. Width/height in basic info are CSS declarations, not measured geometry.
 - `get_jsx` supports only `inline-styles`. `get_tokens` can return JSON, CSS, or a Tailwind theme block; this does not imply Tailwind JSX generation.
 - `set_text_content` edits leaf text; it rejects nodes with children. Token renames rewrite exact `var(--name)` references, not every possible CSS fallback expression.

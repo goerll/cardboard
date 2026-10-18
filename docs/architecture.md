@@ -113,7 +113,10 @@ Additions:
 Changed existing tools:
 
 * `write_html`: `mode` also accepts `insert-before` / `insert-after` (sibling of target);
-  `insert-children` takes an optional `index` (clamped). `layer-name="..."` sets `Node.name`;
+  `insert-children` takes an optional `index` (clamped, counts text: a target's own text is
+  hoisted into a leading `Text` span first). `html` or an absolute `path` (.html/.htm/.svg,
+  8 MiB) supplies the markup; the result carries `warnings` for mapped/dropped markup
+  (`src/import.rs`). `layer-name="..."` sets `Node.name`;
   `hidden` hides; `id` attributes are kept (SVG gradients/clip paths reference them).
 * `create_artboard`: optional `x`, `y` set `position`.
 * `move_nodes`: moving to `root` accepts optional `x`, `y`; moving into a node clears `position`.
