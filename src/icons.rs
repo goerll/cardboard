@@ -12,7 +12,6 @@ use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
     sync::Mutex,
-    time::Duration,
 };
 
 const API: &str = "https://api.iconify.design";
@@ -104,15 +103,9 @@ pub fn cached(name: &str) -> Result<Option<Icon>> {
     }))
 }
 
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(10)))
-        .user_agent(concat!("cardboard/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .into()
-}
 fn get(url: &str, query: &[(&str, &str)]) -> Result<Value> {
-    let mut request = agent().get(url);
+    // One HTTP client configuration for icons, fonts and images.
+    let mut request = crate::assets::agent().get(url);
     for (k, v) in query {
         request = request.query(*k, *v);
     }

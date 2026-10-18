@@ -1820,7 +1820,7 @@ pub fn definitions() -> Vec<Value> {
     for tool in &mut tools {
         if matches!(
             tool["name"].as_str(),
-            Some("import_image" | "search_images" | "add_font")
+            Some("import_image" | "search_images" | "add_font" | "search_icons" | "insert_icon")
         ) {
             tool["annotations"]["openWorldHint"] = json!(true);
         }
@@ -2090,7 +2090,26 @@ fn import_image(store: &mut Store, args: &Value) -> Result<Value> {
     if let Some(index) = args.get("index") {
         write["index"] = index.clone();
     }
+    // Placing the image is a write_html into parentId, and other agents' claims apply to it.
+    let actor = store.actor.clone();
+    if let Some(actor) = &actor {
+        let file = store.open(&id)?;
+        presence::check(&file.doc, &file.claims, actor, "write_html", &write)?;
+    }
     let inserted = store.transaction(&id, |doc| mutate(doc, "write_html", &write))?;
+    if let Some(actor) = &actor {
+        let file = store.files.get_mut(&id).ok_or("File is not open")?;
+        presence::record(
+            &file.doc,
+            &mut file.claims,
+            actor,
+            "write_html",
+            &write,
+            &inserted,
+            vec![],
+        );
+        store.presence_changed(&id);
+    }
     result["nodeId"] = inserted["nodeIds"][0].clone();
     result["fileId"] = json!(id);
     result["revision"] = json!(store.file(&id)?.revision);

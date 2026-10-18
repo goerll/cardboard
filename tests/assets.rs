@@ -394,3 +394,59 @@ fn google_fonts_requests_and_stylesheets_parse() {
     );
     assert_eq!(fonts::parse_google_css(css, &["all".into()]).len(), 2);
 }
+
+#[test]
+fn renders_carry_document_fonts_and_stored_images() {
+    let (dir, mut s, file, frame) = library_with_file("render");
+    let font = dir.join("Brand.ttf");
+    std::fs::write(&font, ttf(3)).unwrap();
+    edit(
+        &mut s,
+        "add_font",
+        json!({"fileId":file,"family":"Brand Sans","path":font.to_string_lossy()}),
+    );
+    let image = dir.join("photo.png");
+    std::fs::write(&image, png(10, 10, 3)).unwrap();
+    edit(
+        &mut s,
+        "import_image",
+        json!({"fileId":file,"path":image.to_string_lossy(),"parentId":frame}),
+    );
+    let job = cardboard::render::prepare(&s, "screenshot", &json!({"fileId":file,"nodeId":frame}))
+        .unwrap();
+    let html = job.html();
+    assert!(html.contains("@font-face{font-family:\"Brand Sans\";src:url(\"data:font/ttf;base64,"));
+    assert!(html.contains("src=\"data:image/png;base64,"), "{html}");
+    assert!(!html.contains("/asset/"));
+}
+
+#[test]
+fn placing_an_image_respects_other_agents_claims() {
+    let (dir, mut s, file, frame) = library_with_file("claims");
+    let agent = |id: &str| {
+        Some(cardboard::presence::Actor {
+            id: id.into(),
+            name: format!("agent {id}"),
+        })
+    };
+    let image = dir.join("photo.png");
+    std::fs::write(&image, png(10, 10, 4)).unwrap();
+    let args = json!({"fileId":file,"path":image.to_string_lossy(),"parentId":frame});
+    s.actor = agent("a");
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"fileId":file,"updates":[{"nodeIds":[frame],"styles":{"color":"red"}}]}),
+    );
+    s.actor = agent("b");
+    let error = tools::call(&mut s, "import_image", &args).unwrap_err();
+    assert!(error.contains("agent a"), "{error}");
+    s.actor = agent("a");
+    let placed = edit(&mut s, "import_image", args);
+    // The new image is A's, and only A can undo placing it.
+    s.actor = agent("b");
+    let restyle =
+        json!({"fileId":file,"updates":[{"nodeIds":[placed["nodeId"]],"styles":{"color":"red"}}]});
+    assert!(tools::call(&mut s, "update_styles", &restyle).is_err());
+    assert!(tools::call(&mut s, "undo", &json!({"fileId":file})).is_err());
+}

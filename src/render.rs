@@ -57,6 +57,12 @@ pub struct Job {
     artboard: String,
     kind: Kind,
 }
+impl Job {
+    /// The page the browser will load.
+    pub fn html(&self) -> &str {
+        &self.html
+    }
+}
 enum Kind {
     Screenshot {
         node: String,
@@ -80,6 +86,8 @@ pub fn prepare(store: &Store, name: &str, args: &Value) -> Result<Job> {
     let file = store.file_id(args)?;
     let doc = store.file(&file)?;
     let meta = json!({"fileId":file,"revision":doc.revision});
+    let assets = store.assets_for(&file);
+    let assets = assets.as_deref();
     match name {
         "screenshot" => {
             let scale = match args.get("scale") {
@@ -107,6 +115,7 @@ pub fn prepare(store: &Store, name: &str, args: &Value) -> Result<Job> {
                 artboard,
                 meta,
                 Kind::Screenshot { node, scale, path },
+                assets,
             ))
         }
         "get_bounds" => {
@@ -161,23 +170,36 @@ pub fn prepare(store: &Store, name: &str, args: &Value) -> Result<Job> {
                 truncated,
                 props,
             };
-            Ok(job(doc, artboard.unwrap(), meta, kind))
+            Ok(job(doc, artboard.unwrap(), meta, kind, assets))
         }
         _ => Err(format!("{name} is not a render tool")),
     }
 }
 
-fn job(doc: &Document, artboard: &Node, meta: Value, kind: Kind) -> Job {
+fn job(
+    doc: &Document,
+    artboard: &Node,
+    meta: Value,
+    kind: Kind,
+    assets: Option<&std::path::Path>,
+) -> Job {
     let tokens = doc
         .tokens
         .iter()
         .map(|(k, v)| format!("{k}:{v}"))
         .collect::<Vec<_>>()
         .join(";");
+    let fonts = crate::fonts::css(&doc.fonts);
     let html = format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><style>{FRAME_CSS}:root{{{tokens}}}</style></head><body><div class=\"cb-ab\">{}</div></body></html>",
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"{CSP}\"><style>{fonts}{FRAME_CSS}:root{{{tokens}}}</style></head><body><div class=\"cb-ab\">{}</div></body></html>",
         html::node_html(artboard, true)
     );
+    // Stored images and fonts (/asset/...) go in as data URIs: the page is a file:// URL, where
+    // Chromium refuses cross-file font loads.
+    let html = match assets {
+        Some(dir) => crate::assets::embed(&html, dir, crate::assets::Embed::Inline),
+        None => html,
+    };
     // The editor's viewport is the canvas, so vw/vh/% on an artboard have no fixed meaning;
     // use the artboard's own px size, or a desktop default.
     let px = |key: &str, default: f64| {
