@@ -858,6 +858,48 @@ fn misnested_html_is_repaired_the_way_browsers_do() {
         "{html}"
     );
 }
+#[test]
+fn whitespace_between_inline_elements_survives_import_and_export() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let ids = insert(
+        &mut s,
+        &frame,
+        concat!(
+            "<p><span>Kenji Watanabe</span> <span>10:14</span>\n  <b>new</b></p>",
+            "<div>\n  <p>a</p>\n  <p>b</p>\n  <span>c</span>\n</div>",
+            "<div style=\"display:flex\"><span>a</span> <span>b</span></div>",
+            "<span> <em>x</em></span>",
+        ),
+    );
+    let doc = s.file(&fid(&s)).unwrap();
+    let node = |i: usize| doc.node(&ids[i]).unwrap();
+    let texts = |n: &cardboard::document::Node| {
+        n.children
+            .iter()
+            .map(|c| c.text.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(texts(node(0)), ["Kenji Watanabe", " ", "10:14", " ", "new"]);
+    // Indentation next to blocks, at block edges and in flex containers renders nothing.
+    assert_eq!(tags(node(1)), ["p", "p", "span"]);
+    assert_eq!(tags(node(2)), ["span", "span"]);
+    // Inside an inline parent the leading space is not at a line edge, so it stays.
+    assert_eq!(texts(node(3)), [" ", "x"]);
+    let exported = html::node_html(node(0), false);
+    assert!(
+        exported.contains("Watanabe</span><span> </span><span>10:14</span>"),
+        "{exported}"
+    );
+    let inline = html::node_html(node(3), false);
+    let again = insert(&mut s, &frame, &format!("{exported}{inline}"));
+    let doc = s.file(&fid(&s)).unwrap();
+    assert_eq!(
+        html::node_html(doc.node(&again[0]).unwrap(), false),
+        exported
+    );
+    assert_eq!(html::node_html(doc.node(&again[1]).unwrap(), false), inline);
+}
 
 fn card_page(s: &mut Store) -> (String, Vec<String>) {
     let frame = artboard(s);
