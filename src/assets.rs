@@ -342,7 +342,12 @@ pub fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_global(Some(Duration::from_secs(60)))
-        .user_agent(concat!("Cardboard/", env!("CARGO_PKG_VERSION")))
+        // Image hosts such as Wikimedia rate-limit anonymous agents; say who is asking.
+        .user_agent(concat!(
+            "Cardboard/",
+            env!("CARGO_PKG_VERSION"),
+            " (+https://github.com/goerll/cardboard)"
+        ))
         .http_status_as_error(false)
         .build()
         .into()
@@ -358,11 +363,26 @@ pub fn fetch(url: &str, headers: &[(&str, &str)], limit: usize) -> Result<Vec<u8
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("Only http and https URLs can be fetched".into());
     }
-    let mut request = agent().get(url);
-    for (k, v) in headers {
-        request = request.header(*k, *v);
+    let get = || {
+        let mut request = agent().get(url);
+        for (k, v) in headers {
+            request = request.header(*k, *v);
+        }
+        request.call().map_err(|e| offline(url, e))
+    };
+    let mut response = get()?;
+    // One polite retry when the host asks us to slow down, waiting at most a few seconds.
+    if response.status().as_u16() == 429 {
+        let wait = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(2)
+            .clamp(1, 5);
+        std::thread::sleep(Duration::from_secs(wait));
+        response = get()?;
     }
-    let mut response = request.call().map_err(|e| offline(url, e))?;
     let status = response.status();
     if !status.is_success() {
         let body = response
