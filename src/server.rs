@@ -237,6 +237,7 @@ struct Pushed {
     files: HashMap<String, u64>,
     workspace: String,
     library: u64,
+    update: Value,
 }
 
 /// Messages that bring a client up to date, documents first so tabs never point at unknown files.
@@ -266,11 +267,23 @@ fn sync(hub: &Hub, pushed: &mut Pushed) -> Vec<String> {
         }
         open
     });
+    drop(store);
+    if let Some(status) = hub.updater().map(|u| u.status())
+        && status != pushed.update
+    {
+        out.push(json!({"type":"update","update":&status}).to_string());
+        pushed.update = status;
+    }
+    let store = hub.lock();
     if pushed.library != store.library_seq {
         pushed.library = store.library_seq;
         out.push(json!({"type":"library"}).to_string());
     }
     out
+}
+
+fn is_update_tool(tool: &str) -> bool {
+    crate::update::UI_TOOLS.contains(&tool)
 }
 
 async fn send_all(socket: &mut WebSocket, messages: Vec<String>) -> bool {
@@ -303,6 +316,18 @@ async fn session(mut socket: WebSocket, hub: Arc<Hub>) {
                 let request: Value = serde_json::from_str(text.as_str()).unwrap_or_default();
                 let id = request.get("id").cloned().unwrap_or(Value::Null);
                 let reply = match request.get("tool").and_then(Value::as_str) {
+                    // Update requests go to the desktop's updater, never to the tool engine (or MCP).
+                    Some(tool) if is_update_tool(tool) => {
+                        let args = request.get("args").cloned().unwrap_or(json!({}));
+                        let result = match hub.updater() {
+                            Some(updater) => updater.call(tool, &args),
+                            None => Err("Updates are handled by the Cardboard desktop app".into()),
+                        };
+                        match result {
+                            Ok(result) => json!({"type":"result","id":id,"ok":true,"result":result}),
+                            Err(error) => json!({"type":"result","id":id,"ok":false,"error":error}),
+                        }
+                    }
                     Some(tool) => {
                         let (hub, tool, args) = (hub.clone(), tool.to_owned(), request.get("args").cloned().unwrap_or(json!({})));
                         match tokio::task::spawn_blocking(move || hub.call(&tool, &args)).await {

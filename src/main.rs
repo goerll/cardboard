@@ -27,6 +27,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
             service.waiting().await?;
         }
+        "--version" | "-V" | "version" => println!("cardboard {}", env!("CARGO_PKG_VERSION")),
+        "update" => {
+            if let Err(e) = update(
+                &args,
+                option("--root").map(PathBuf::from),
+                option("--wait-pid"),
+            ) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
         "doctor" => {
             if !cardboard::doctor::run(&socket(), &library()) {
                 std::process::exit(1);
@@ -45,6 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             hub.spawn_autosave();
             let server = cardboard::server::run_server(hub.clone(), port).await?;
             hub.set_host(serde_json::json!({"mode":"serve","editorUrl":server.url}));
+            // Debug builds can fake a ready update to check the editor's update pill.
+            #[cfg(debug_assertions)]
+            if let Ok(version) = std::env::var("CARDBOARD_UPDATE_FAKE_READY") {
+                hub.set_updater(cardboard::update::Updater::fake_ready(&version));
+            }
             let shared = hub.clone();
             tokio::spawn(async move {
                 if let Err(e) = cardboard::mcp::serve_socket(listener, shared).await {
@@ -74,9 +90,85 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", result["html"].as_str().unwrap());
         }
         _ => println!(
-            "Cardboard {}\n\nDesktop app: cardboard-desktop\nEditor in a browser: cardboard serve [--library DIR] [--port N] [--open] [--socket PATH]\nAgent relay: cardboard mcp [--socket PATH] [--library DIR] [--no-fallback]\n  (hosts the library headless when no app is running; the app takes over when it starts)\nCheck setup: cardboard doctor [--socket PATH] [--library DIR]\nStandalone: cardboard mcp --document FILE.cardboard\nHTML export: cardboard export --document FILE.cardboard",
+            "Cardboard {}\n\nDesktop app: cardboard-desktop\nEditor in a browser: cardboard serve [--library DIR] [--port N] [--open] [--socket PATH]\nAgent relay: cardboard mcp [--socket PATH] [--library DIR] [--no-fallback]\n  (hosts the library headless when no app is running; the app takes over when it starts)\nCheck setup: cardboard doctor [--socket PATH] [--library DIR]\nUpdate: cardboard update [--check]   (installs made by the installer; the app also updates itself)\nStandalone: cardboard mcp --document FILE.cardboard\nHTML export: cardboard export --document FILE.cardboard",
             env!("CARGO_PKG_VERSION")
         ),
+    }
+    Ok(())
+}
+
+/// `cardboard update [--check]`, and the internal `--apply` helper the desktop app starts.
+fn update(args: &[String], root: Option<PathBuf>, wait_pid: Option<String>) -> Result<(), String> {
+    use cardboard::update::{self, Found, Install};
+    if args.iter().any(|a| a == "--apply") {
+        let root = root.ok_or("--apply needs --root")?;
+        let pid = wait_pid
+            .map(|p| p.parse::<u32>().map_err(|e| e.to_string()))
+            .transpose()?;
+        let relaunch = args.iter().any(|a| a == "--relaunch").then(|| {
+            let rest = args.iter().position(|a| a == "--");
+            rest.map(|i| args[i + 1..].to_vec()).unwrap_or_default()
+        });
+        return update::run_helper(&root, pid, relaunch);
+    }
+    let check_only = args.iter().any(|a| a == "--check");
+    println!("Cardboard {}", update::CURRENT);
+    let install = Install::current();
+    if let Some(reason) = update::disabled_by_env() {
+        return Err(format!("Updates are turned off: {reason}."));
+    }
+    if let Err(reason) = &install
+        && !check_only
+    {
+        return Err(format!("Not updating: {reason}."));
+    }
+    let found = update::check()?;
+    let release = match found {
+        Found::UpToDate(_) => {
+            println!("Up to date.");
+            return Ok(());
+        }
+        Found::NotYet(v) => {
+            println!(
+                "{v} is out but not signed for this platform yet; try again in a few minutes."
+            );
+            return Ok(());
+        }
+        Found::Available(release) => release,
+    };
+    println!("Latest: {} ({})", release.version, release.notes_url);
+    let install = match install {
+        Ok(install) if !check_only => install,
+        Ok(_) => {
+            println!("Run `cardboard update` to install it.");
+            return Ok(());
+        }
+        Err(reason) => {
+            println!("This copy can't update itself: {reason}.");
+            return Ok(());
+        }
+    };
+    println!("Downloading {}…", release.archive.name);
+    update::stage(&install, &release)?;
+    println!("Verified the signature.");
+    // The open app swaps itself on its next restart; it holds files Windows won't replace.
+    let socket = cardboard::mcp::default_socket();
+    let running = cardboard::mcp::control(&socket, &serde_json::json!({"cardboard":"status"}))
+        .is_ok_and(|s| s["mode"] == "app");
+    if running {
+        println!(
+            "Restart Cardboard to finish updating to {}.",
+            release.version
+        );
+    } else if cfg!(windows) {
+        update::spawn_apply(&install, None)?;
+        println!(
+            "Finishing the update to {} in the background.",
+            release.version
+        );
+    } else {
+        let version = update::apply(&install, None)?;
+        println!("Updated to {version}.");
     }
     Ok(())
 }

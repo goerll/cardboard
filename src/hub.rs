@@ -15,6 +15,7 @@ pub struct Hub {
     changed: watch::Sender<u64>,
     host: OnceLock<Value>,
     retired: watch::Sender<bool>,
+    updater: OnceLock<Arc<crate::update::Updater>>,
 }
 
 impl Hub {
@@ -25,6 +26,7 @@ impl Hub {
             changed: watch::channel(generation).0,
             host: OnceLock::new(),
             retired: watch::channel(false).0,
+            updater: OnceLock::new(),
         })
     }
     pub fn lock(&self) -> MutexGuard<'_, Store> {
@@ -44,6 +46,19 @@ impl Hub {
         let result = store.flush();
         self.retired.send_replace(true);
         result
+    }
+    /// Attach the desktop's background updater; its status changes wake the editor UIs.
+    pub fn set_updater(self: &Arc<Self>, updater: Arc<crate::update::Updater>) {
+        let hub = Arc::downgrade(self);
+        updater.on_change(move || {
+            if let Some(hub) = hub.upgrade() {
+                hub.changed.send_modify(|_| {});
+            }
+        });
+        let _ = self.updater.set(updater);
+    }
+    pub fn updater(&self) -> Option<&Arc<crate::update::Updater>> {
+        self.updater.get()
     }
     pub fn is_retired(&self) -> bool {
         *self.retired.borrow()

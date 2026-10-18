@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 pub struct Backend {
     pub url: String,
-    hub: Arc<Hub>,
+    pub hub: Arc<Hub>,
     socket: PathBuf,
 }
 

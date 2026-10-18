@@ -349,12 +349,61 @@ function SettingsView() {
         </div>
         <code className="path">{library}</code>
       </div>
+      <UpdateSetting />
       <div className="setting">
         <div>
           <div className="setting-title">Agents (MCP)</div>
           <div className="muted small">Run <code>cardboard mcp</code> from your agent. It connects to this window while Cardboard is open.</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function UpdateSetting() {
+  const update = useServer((s) => s.update);
+  if (!update) return null;
+  const locked = !update.managed || (update.state === 'disabled' && !!update.reason);
+  const status = (() => {
+    if (update.reason) return `Off: ${update.reason}.`;
+    switch (update.state) {
+      case 'ready':
+        return `Cardboard ${update.version} is ready. It installs when you restart.`;
+      case 'checking':
+        return 'Checking for updates…';
+      case 'downloading':
+        return 'Downloading an update…';
+      case 'disabled':
+        return `Version ${update.current}. Run cardboard update to update by hand.`;
+      default:
+        return update.error
+          ? `Version ${update.current}. The last check didn't go through; it retries later.`
+          : `Version ${update.current}, up to date${update.lastCheck ? ` (checked ${ago(update.lastCheck * 1000)})` : ''}.`;
+    }
+  })();
+  return (
+    <div className="setting">
+      <div>
+        <div className="setting-title">Automatic updates</div>
+        <div className="muted small">Downloads signed releases in the background and installs them the next time Cardboard starts. {status}</div>
+      </div>
+      {!locked && (
+        <div className="setting-actions">
+          {update.autoUpdate && update.state === 'idle' && (
+            <button type="button" className="btn" onClick={() => call('check_for_updates')}>
+              Check now
+            </button>
+          )}
+          <Segmented
+            value={update.autoUpdate ? 'on' : 'off'}
+            options={[
+              { value: 'on', label: 'On' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(v) => call('set_auto_update', { enabled: v === 'on' })}
+          />
+        </div>
+      )}
     </div>
   );
 }
