@@ -171,15 +171,16 @@ off and turn into a pile of layers. Find names with `search_icons` (for example
 When the work is the system itself (a theme, a component look, a shadcn setup), iterate on
 tokens against a full specimen instead of a single screen:
 
-1. **Seed a theme.** `apply_theme` with a `preset` (`shadcn` for stock shadcn/ui, or `nexus`,
-   `porcelain`, `graphite`, `soft-machine` for more opinionated starting points), or with `css`
+1. **Seed a theme.** `apply_theme` with `preset: "shadcn"` for stock shadcn/ui, or with `css`
    pasted from shadcn, tweakcn or a project's `globals.css` (`:root` and `.dark`, oklch is
-   fine). This writes the shadcn contract (`--background`, `--primary`, `--border`, `--chart-*`,
+   fine). For a more opinionated look, start from shadcn and change tokens, or paste the
+   project's own theme. This writes the shadcn contract (`--background`, `--primary`, `--border`, `--chart-*`,
    `--sidebar-*`, `--radius`, `--font-sans`, `--shadow-*`...) for light and dark, plus extension
    tokens for things shadcn can't express: `--font-display`, `--font-figures`,
    `--display-weight`, `--display-tracking`, `--radius-control` (buttons), `--radius-field`
    (inputs), `--radius-chip` (badges), `--card-ring`, `--card-shadow`, `--field-bg`,
-   `--field-border` and `--signal` (one accent dot).
+   `--field-border` and `--signal` (one accent dot). Extension tokens a pasted theme leaves out
+   get neutral defaults derived from its shadcn tokens; set them to give the system its voice.
 2. **Open the kit.** `create_kit` builds a "Design system" page with one artboard per mode,
    side by side: swatches, radius and elevation, type scale, buttons in every variant and size,
    badges, form controls, cards, stat cards with a chart, a table, tabs, accordion, alerts,

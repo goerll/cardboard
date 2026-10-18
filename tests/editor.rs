@@ -1405,23 +1405,36 @@ fn apply_theme_imports_tweakcn_css_and_exports_shadcn() {
 }
 
 #[test]
-fn every_preset_is_a_valid_light_and_dark_theme() {
-    for preset in cardboard::theme::PRESETS {
-        let mut s = Store::memory();
-        edit(&mut s, "apply_theme", json!({"preset":preset}));
-        let doc = s.file(&fid(&s)).unwrap();
-        doc.validate().unwrap();
-        for name in [
-            "--background",
-            "--primary",
-            "--card-ring",
-            "--field-bg",
-            "--radius-control",
-        ] {
-            assert!(doc.tokens.contains_key(name), "{preset} lacks {name}");
-        }
-        assert!(!doc.modes["dark"].is_empty(), "{preset} has no dark values");
+fn shadcn_is_the_only_preset_and_pasted_themes_get_extension_defaults() {
+    assert_eq!(cardboard::theme::PRESETS, ["shadcn"]);
+    let mut s = Store::memory();
+    edit(&mut s, "apply_theme", json!({"preset":"shadcn"}));
+    let doc = s.file(&fid(&s)).unwrap();
+    doc.validate().unwrap();
+    for name in [
+        "--background",
+        "--primary",
+        "--card-ring",
+        "--field-bg",
+        "--radius-control",
+    ] {
+        assert!(doc.tokens.contains_key(name), "shadcn lacks {name}");
     }
+    assert!(!doc.modes["dark"].is_empty(), "shadcn has no dark values");
+    let error = tools::call(&mut s, "apply_theme", &json!({"preset":"material"})).unwrap_err();
+    assert!(error.contains("css"), "{error}");
+
+    // A small pasted theme keeps its own values and gets neutral extension tokens.
+    let mut s = Store::memory();
+    let css = ":root { --background: #fafafa; --foreground: #111; --primary: #2563eb; --radius: 0.5rem; --radius-chip: 2px; }\n.dark { --background: #0b0b0c; --foreground: #eee; }";
+    edit(&mut s, "apply_theme", json!({"css":css}));
+    let doc = s.file(&fid(&s)).unwrap();
+    doc.validate().unwrap();
+    assert_eq!(doc.tokens["--primary"], "#2563eb");
+    assert_eq!(doc.tokens["--radius-chip"], "2px");
+    assert_eq!(doc.tokens["--signal"], "var(--primary)");
+    assert_eq!(doc.tokens["--field-border"], "var(--input)");
+    assert_eq!(doc.modes["dark"]["--background"], "#0b0b0c");
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! Token modes, theme presets and shadcn/tweakcn CSS import and export.
+//! Token modes, the stock shadcn seed and shadcn/tweakcn CSS import and export.
 //!
 //! `Document.tokens` holds the base mode, called "light". Every other mode stores only the
 //! values it overrides in `Document.modes`. Renderers declare the fully resolved set for each
@@ -372,303 +372,38 @@ pub fn apply(doc: &mut Document, sets: BTreeMap<String, Tokens>, replace: bool) 
     Ok(())
 }
 
-// ───────────────────────────── presets ─────────────────────────────
+// ───────────────────────────── seed ─────────────────────────────
 
-/// A theme is a small palette per mode plus shape and type knobs, expanded into the full shadcn
-/// contract and the extension tokens the kit uses (ported from nexus-ds-lab `lib/themes.ts`).
-struct Palette {
-    ground: &'static str,
-    surface: &'static str,
-    tone: &'static str,
-    line: &'static str,
-    field: &'static str,
-    text: &'static str,
-    muted: &'static str,
-    faint: &'static str,
-    on_text: &'static str,
-    destructive: &'static str,
-}
-struct Preset {
-    sans: &'static str,
-    mono: &'static str,
-    figures: &'static str,
-    display: (u32, &'static str),
-    radius: [&'static str; 4], // base, control, field, chip
-    card_shadow: &'static str,
-    card_ring: bool,
-    filled_fields: bool,
-    shadow_rgb: &'static str,
-    signal: Option<&'static str>,
-    popover_white: bool,
-    light: Palette,
-    dark: Palette,
-}
-
-const INTER: &str = "Inter, ui-sans-serif, system-ui, sans-serif";
 const GEIST: &str = "Geist, ui-sans-serif, system-ui, sans-serif";
-const DM_SANS: &str = "\"DM Sans\", ui-sans-serif, system-ui, sans-serif";
-const FIGTREE: &str = "Figtree, ui-sans-serif, system-ui, sans-serif";
 const GEIST_MONO: &str = "\"Geist Mono\", ui-monospace, monospace";
 
-const NEUTRAL_DARK: Palette = Palette {
-    ground: "#0B0B0C",
-    surface: "#141416",
-    tone: "#1E1E21",
-    line: "#2A2A2E",
-    field: "#34343A",
-    text: "#EDEDEF",
-    muted: "#9A9AA1",
-    faint: "#5C5C63",
-    on_text: "#0B0B0C",
-    destructive: "#F2715A",
-};
-const WARM_DARK: Palette = Palette {
-    ground: "#121110",
-    surface: "#1A1917",
-    tone: "#24221F",
-    line: "#2E2B28",
-    field: "#3A3733",
-    text: "#F2F0EC",
-    muted: "#A39F98",
-    faint: "#6B6761",
-    on_text: "#121110",
-    destructive: "#F2715A",
-};
-const COOL_DARK: Palette = Palette {
-    ground: "#0F1113",
-    surface: "#171A1D",
-    tone: "#202428",
-    line: "#2A2F34",
-    field: "#363C42",
-    text: "#ECEFF2",
-    muted: "#9AA2AB",
-    faint: "#5F666E",
-    on_text: "#0F1113",
-    destructive: "#F2715A",
-};
-
-fn preset_data(name: &str) -> Option<Preset> {
-    Some(match name {
-        "nexus" => Preset {
-            sans: INTER,
-            mono: GEIST_MONO,
-            figures: INTER,
-            display: (600, "-0.04em"),
-            radius: ["0.75rem", "999px", "0.625rem", "999px"],
-            card_shadow: "0 0 0 1px rgba(10,10,10,0.06), 0 1px 2px rgba(10,10,10,0.04), 0 6px 20px rgba(10,10,10,0.05)",
-            card_ring: false,
-            filled_fields: false,
-            shadow_rgb: "10,10,10",
-            signal: None,
-            popover_white: true,
-            light: Palette {
-                ground: "#FFFFFF",
-                surface: "#F6F6F6",
-                tone: "#ECECEC",
-                line: "#E6E6E6",
-                field: "#E0E0E0",
-                text: "#0A0A0A",
-                muted: "#646464",
-                faint: "#A6A6A6",
-                on_text: "#FFFFFF",
-                destructive: "#D93025",
-            },
-            dark: Palette {
-                surface: "#161618",
-                ..NEUTRAL_DARK
-            },
-        },
-        "porcelain" => Preset {
-            sans: FIGTREE,
-            mono: GEIST_MONO,
-            figures: FIGTREE,
-            display: (600, "-0.035em"),
-            radius: ["1rem", "999px", "0.75rem", "999px"],
-            card_shadow: "0 1px 2px rgba(26,25,24,0.04), 0 8px 24px rgba(26,25,24,0.06)",
-            card_ring: false,
-            filled_fields: false,
-            shadow_rgb: "26,25,24",
-            signal: None,
-            popover_white: false,
-            light: Palette {
-                ground: "#FAF9F7",
-                surface: "#FFFFFF",
-                tone: "#F1EFEB",
-                line: "#E9E6E1",
-                field: "#E2DED8",
-                text: "#1A1918",
-                muted: "#6E6B66",
-                faint: "#B5B1AA",
-                on_text: "#FFFFFF",
-                destructive: "#C2412D",
-            },
-            dark: WARM_DARK,
-        },
-        "graphite" => Preset {
-            sans: GEIST,
-            mono: GEIST_MONO,
-            figures: GEIST_MONO,
-            display: (500, "-0.045em"),
-            radius: ["0.5rem", "0.5rem", "0.5rem", "0.375rem"],
-            card_shadow: "none",
-            card_ring: true,
-            filled_fields: false,
-            shadow_rgb: "0,0,0",
-            signal: None,
-            popover_white: false,
-            light: Palette {
-                ground: "#FFFFFF",
-                surface: "#FFFFFF",
-                tone: "#F5F5F5",
-                line: "#E6E6E6",
-                field: "#E0E0E0",
-                text: "#0A0A0A",
-                muted: "#666666",
-                faint: "#A8A8A8",
-                on_text: "#FFFFFF",
-                destructive: "#D93025",
-            },
-            dark: NEUTRAL_DARK,
-        },
-        "soft-machine" => Preset {
-            sans: DM_SANS,
-            mono: GEIST_MONO,
-            figures: GEIST_MONO,
-            display: (500, "-0.035em"),
-            radius: ["1.25rem", "999px", "0.75rem", "999px"],
-            card_shadow: "inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(19,21,24,0.06), 0 6px 16px rgba(19,21,24,0.06)",
-            card_ring: false,
-            filled_fields: true,
-            shadow_rgb: "19,21,24",
-            signal: Some("#FF5B1F"),
-            popover_white: false,
-            light: Palette {
-                ground: "#EDEFF1",
-                surface: "#FFFFFF",
-                tone: "#E4E7EA",
-                line: "#DCE0E4",
-                field: "#E4E7EA",
-                text: "#131518",
-                muted: "#666C74",
-                faint: "#AEB3BA",
-                on_text: "#FFFFFF",
-                destructive: "#C2412D",
-            },
-            dark: COOL_DARK,
-        },
-        _ => return None,
-    })
-}
-
-fn expand(t: &Preset, dark: bool) -> Tokens {
-    let p = if dark { &t.dark } else { &t.light };
-    let rgb = t.shadow_rgb;
-    let mut v: Vec<(&str, String)> = vec![
-        ("--background", p.ground.into()),
-        ("--foreground", p.text.into()),
-        ("--card", p.surface.into()),
-        ("--card-foreground", p.text.into()),
-        (
-            "--popover",
-            if t.popover_white && !dark {
-                "#FFFFFF"
-            } else {
-                p.surface
-            }
-            .into(),
-        ),
-        ("--popover-foreground", p.text.into()),
-        ("--primary", p.text.into()),
-        ("--primary-foreground", p.on_text.into()),
-        ("--secondary", p.tone.into()),
-        ("--secondary-foreground", p.text.into()),
-        ("--muted", p.tone.into()),
-        ("--muted-foreground", p.muted.into()),
-        ("--accent", p.tone.into()),
-        ("--accent-foreground", p.text.into()),
-        ("--destructive", p.destructive.into()),
-        ("--border", p.line.into()),
-        ("--input", p.field.into()),
-        ("--ring", p.faint.into()),
-        ("--chart-1", p.text.into()),
-        ("--chart-2", p.muted.into()),
-        ("--chart-3", p.faint.into()),
-        ("--chart-4", p.line.into()),
-        ("--chart-5", p.tone.into()),
-        ("--radius", t.radius[0].into()),
-        ("--sidebar", if dark { p.surface } else { p.ground }.into()),
-        ("--sidebar-foreground", p.text.into()),
-        ("--sidebar-primary", p.text.into()),
-        ("--sidebar-primary-foreground", p.on_text.into()),
-        ("--sidebar-accent", p.tone.into()),
-        ("--sidebar-accent-foreground", p.text.into()),
-        ("--sidebar-border", p.line.into()),
-        ("--sidebar-ring", p.faint.into()),
-        ("--font-sans", t.sans.into()),
-        ("--font-mono", t.mono.into()),
-        ("--shadow-sm", format!("0 1px 2px rgba({rgb},0.05)")),
-        (
-            "--shadow-md",
-            format!("0 1px 2px rgba({rgb},0.04), 0 8px 24px rgba({rgb},0.08)"),
-        ),
-        (
-            "--shadow-lg",
-            format!("0 2px 4px rgba({rgb},0.04), 0 16px 48px rgba({rgb},0.12)"),
-        ),
-    ];
-    v.extend(extensions(
-        t.sans,
-        t.figures,
-        t.display,
-        t.radius,
-        if t.card_ring || dark {
-            p.line
-        } else {
-            "transparent"
-        },
-        if dark { "none" } else { t.card_shadow },
-        if t.filled_fields {
-            p.field
-        } else {
-            "transparent"
-        },
-        if t.filled_fields {
-            "transparent"
-        } else {
-            p.field
-        },
-        t.signal.unwrap_or(p.text),
-    ));
-    v.into_iter().map(|(k, v)| (k.into(), v)).collect()
-}
-
-/// The knobs shadcn's contract lacks but real systems differ on.
-#[allow(clippy::too_many_arguments)]
-fn extensions(
-    display_font: &str,
-    figures: &str,
-    display: (u32, &str),
-    radius: [&str; 4],
-    card_ring: &str,
-    card_shadow: &str,
-    field_bg: &str,
-    field_border: &str,
-    signal: &str,
-) -> Vec<(&'static str, String)> {
-    vec![
-        ("--font-display", display_font.into()),
-        ("--font-figures", figures.into()),
-        ("--display-weight", display.0.to_string()),
-        ("--display-tracking", display.1.into()),
-        ("--radius-control", radius[1].into()),
-        ("--radius-field", radius[2].into()),
-        ("--radius-chip", radius[3].into()),
-        ("--card-ring", card_ring.into()),
-        ("--card-shadow", card_shadow.into()),
-        ("--field-bg", field_bg.into()),
-        ("--field-border", field_border.into()),
-        ("--signal", signal.into()),
+/// The knobs shadcn's contract lacks but real systems differ on, with neutral defaults derived
+/// from shadcn's own tokens, so any theme (preset, pasted CSS or direct values) can carry them.
+pub fn extension_defaults() -> Tokens {
+    [
+        ("--font-display", "var(--font-sans)"),
+        ("--font-figures", "var(--font-sans)"),
+        ("--display-weight", "600"),
+        ("--display-tracking", "-0.025em"),
+        ("--radius-control", "calc(var(--radius) - 2px)"),
+        ("--radius-field", "calc(var(--radius) - 2px)"),
+        ("--radius-chip", "calc(var(--radius) - 4px)"),
+        ("--card-ring", "var(--border)"),
+        ("--card-shadow", "var(--shadow-sm)"),
+        ("--field-bg", "transparent"),
+        ("--field-border", "var(--input)"),
+        ("--signal", "var(--primary)"),
     ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
+}
+
+/// Add the extension tokens a theme left out, keeping any it defines.
+pub fn fill_extensions(doc: &mut Document) {
+    for (name, value) in extension_defaults() {
+        doc.tokens.entry(name).or_insert(value);
+    }
 }
 
 /// shadcn/ui's stock "neutral" theme (Tailwind v4, oklch) plus the extension tokens.
@@ -780,22 +515,7 @@ fn shadcn_preset() -> BTreeMap<String, Tokens> {
             "0 4px 6px -2px rgba(0,0,0,0.3), 0 12px 24px -4px rgba(0,0,0,0.5)",
         ),
     ];
-    let ext = extensions(
-        "var(--font-sans)",
-        "var(--font-sans)",
-        (600, "-0.025em"),
-        [
-            "",
-            "calc(var(--radius) - 2px)",
-            "calc(var(--radius) - 2px)",
-            "calc(var(--radius) - 4px)",
-        ],
-        "var(--border)",
-        "var(--shadow-sm)",
-        "transparent",
-        "var(--input)",
-        "var(--primary)",
-    );
+    let ext = extension_defaults();
     let mut light: Tokens = pairs
         .iter()
         .map(|(k, l, _)| (k.to_string(), l.to_string()))
@@ -805,23 +525,21 @@ fn shadcn_preset() -> BTreeMap<String, Tokens> {
         .map(|(k, _, d)| (k.to_string(), d.to_string()))
         .collect();
     for (k, v) in ext {
-        light.insert(k.into(), v.clone());
-        dark.insert(k.into(), v);
+        light.insert(k.clone(), v.clone());
+        dark.insert(k, v);
     }
     BTreeMap::from([(BASE_MODE.into(), light), ("dark".into(), dark)])
 }
 
-pub const PRESETS: &[&str] = &["shadcn", "nexus", "porcelain", "graphite", "soft-machine"];
+/// Only the public shadcn/ui default ships as a seed; other systems come in as pasted CSS.
+pub const PRESETS: &[&str] = &["shadcn"];
 
 /// Light and dark token sets for a named preset.
 pub fn preset(name: &str) -> Result<BTreeMap<String, Tokens>> {
-    if name == "shadcn" {
-        return Ok(shadcn_preset());
+    match name {
+        "shadcn" => Ok(shadcn_preset()),
+        _ => Err(format!(
+            "Unknown preset {name}; use shadcn, or pass another theme as css or modes"
+        )),
     }
-    let t = preset_data(name)
-        .ok_or_else(|| format!("Unknown preset {name}; use one of {}", PRESETS.join(", ")))?;
-    Ok(BTreeMap::from([
-        (BASE_MODE.into(), expand(&t, false)),
-        ("dark".into(), expand(&t, true)),
-    ]))
 }

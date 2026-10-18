@@ -65,6 +65,14 @@ class Client:
             self.process.stdout.close()
 
 
+# A small pasted shadcn-style theme (light + dark); apply_theme fills in the rest of the kit's tokens.
+THEME_CSS = """
+:root { --background: oklch(0.99 0 0); --foreground: oklch(0.2 0 0); --primary: oklch(0.55 0.2 260);
+  --primary-foreground: oklch(0.98 0 0); --border: oklch(0.9 0 0); --radius: 0.5rem; }
+.dark { --background: oklch(0.16 0 0); --foreground: oklch(0.96 0 0); --border: oklch(1 0 0 / 12%); }
+"""
+
+
 def main():
     root = pathlib.Path(__file__).resolve().parents[1]
     binary = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "target/debug/cardboard"
@@ -117,7 +125,7 @@ def main():
                 image = [c for c in shot["content"] if c["type"] == "image"]
                 assert image and image[0]["mimeType"] == "image/png", shot["content"][0]
                 assert "image" not in shot["structuredContent"]
-            client.value("apply_theme", {"fileId": file_id, "preset": "nexus"})
+            client.value("apply_theme", {"fileId": file_id, "css": THEME_CSS})
             kit = client.value("create_kit", {"fileId": file_id})
             assert kit["modes"] == ["light", "dark"], kit
             shadcn = client.value("get_tokens", {"fileId": file_id, "format": "shadcn"})["css"]

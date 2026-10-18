@@ -179,7 +179,7 @@ Token modes: `Document.tokens` is the base ("light") set; `Document.modes: {mode
 holds per-mode overrides and `Document.defaultMode` the mode `:root` renders in (both serde
 default, skipped when empty). Layers opt into a mode with the `data-mode` attribute. `theme.rs`
 builds the stylesheet (`tokens_css`, mirrored by `ui/src/lib/tokens.ts`), parses and emits
-shadcn/tweakcn CSS and holds the presets; `kit.rs` generates the `create_kit` specimen.
+shadcn/tweakcn CSS and holds the stock shadcn seed plus extension-token defaults; `kit.rs` generates the `create_kit` specimen.
 
 ## Rust API for hosts (desktop)
 

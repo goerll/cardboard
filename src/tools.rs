@@ -1579,6 +1579,7 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                 html::validate_token(name, value)?;
             }
             theme::apply(doc, sets, bool_arg(args, "replace"))?;
+            theme::fill_extensions(doc);
             Ok(json!({"tokenCount":doc.tokens.len(),"modes":theme::mode_names(doc)}))
         }
         "create_kit" => {
@@ -1589,6 +1590,8 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                     .unwrap_or("shadcn");
                 theme::apply(doc, theme::preset(preset)?, false)?;
             }
+            // The kit reads the extension tokens; themes that predate them get neutral defaults.
+            theme::fill_extensions(doc);
             let modes = match args.get("modes") {
                 Some(_) => string_ids(args, "modes")?,
                 None => theme::mode_names(doc),
@@ -1893,14 +1896,14 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "apply_theme",
-        "Seed or replace the token set with a full shadcn theme (light + dark) plus extension tokens the kit uses. preset: shadcn, nexus, porcelain, graphite or soft-machine; css: pasted shadcn/tweakcn CSS (:root, .dark, oklch ok); modes: {light:{--name:value}, dark:{...}}. Merges unless replace is true.",
+        "Seed or replace the token set with a full shadcn theme (light + dark) plus extension tokens the kit uses (missing ones get neutral defaults). preset: shadcn (stock shadcn/ui); css: pasted shadcn/tweakcn CSS (:root, .dark, oklch ok); modes: {light:{--name:value}, dark:{...}}. Merges unless replace is true.",
         json!({"preset":{"type":"string","enum":theme::PRESETS},"css":s,"modes":obj,"replace":{"type":"boolean"}}),
         vec!["fileId"],
         false,
     );
     add(
         "create_kit",
-        "Generate a component specimen (buttons, badges, form controls, cards, stats, table, tabs, accordion, alerts, dialog, menu, tooltip, toast, avatars, skeleton, chart, swatches, type scale) styled only by token var() references, one artboard per mode side by side. Seeds a preset when the file has no shadcn tokens. Without pageId it creates a \"Design system\" page.",
+        "Generate a component specimen (buttons, badges, form controls, cards, stats, table, tabs, accordion, alerts, dialog, menu, tooltip, toast, avatars, skeleton, chart, swatches, type scale) styled only by token var() references, one artboard per mode side by side. Seeds the shadcn preset when the file has no shadcn tokens. Without pageId it creates a \"Design system\" page.",
         json!({"pageId":s,"modes":ids,"preset":{"type":"string","enum":theme::PRESETS}}),
         vec!["fileId"],
         false,
