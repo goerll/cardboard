@@ -202,7 +202,8 @@ and go through it as an editor:
 - Restructure with `move_nodes`. It keeps layer ids stable; deleting and rewriting HTML breaks
   every reference you or the person had.
 - Group related edits with `batch` so they become a single undo step. Reads can go in a batch
-  too and see the edits made earlier in it.
+  too and see the edits made earlier in it; `screenshot` and `get_bounds` render, so call them
+  on their own after the batch.
 - Change many similar layers at once by giving `update_styles`, `set_attributes` or
   `delete_nodes` a `query` (the `find_nodes` filters) instead of ids, for example every button
   with a 4px radius. It's one undo step and reports how many nodes changed; run the same
