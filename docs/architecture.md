@@ -55,6 +55,36 @@ On first run, a legacy `~/.local/share/cardboard/workspace.json` is imported (ea
 Saves are atomic (temp file + rename) and debounced (~300ms after the last edit, plus on close
 and shutdown).
 
+## Assets
+
+Images live once per library in `<library>/.assets/<sha256>.<ext>` (type checked by content, 32 MB
+max each) and documents reference them as the root-relative URL `/asset/<sha256>.<ext>`. The
+server answers `GET /asset/<name>` from the library store (and the stores of open files from other
+folders) with an immutable cache header and a `sandbox` CSP. The route is not token-gated: names
+are content hashes, so only someone who already has the bytes can form one, and the dashboard's
+opaque-origin thumbnail iframes cannot send the session cookie. Because the canvas, thumbnails and
+inspector all resolve that URL as-is, nothing in the UI rewrites references.
+
+Portability: saving a `.cardboard` file also writes a top-level `"assets": {"<name>": "<base64>"}`
+map with every asset the document references, so a file copied to another machine or library is
+self-contained. Reading a file restores missing entries into that library's store after checking
+each hash. In memory, documents and undo snapshots only carry the short reference, which keeps
+WebSocket pushes small. Saves still rewrite the embedded copies (the same disk cost as the old
+inline base64); if that becomes a problem the next step is a sidecar folder per file.
+
+Migration: any base64 `data:image/...` value (pasted, written by an agent, or in an older file) is
+moved into the store: during the edit that wrote it, or when an older file opens (saved, not an
+undo step). Memory-only sessions have no store and keep data URLs.
+
+`export_html` inlines stored assets as `data:` URIs (default) or links them with `file://` URLs
+(`assets: "files"`); both are allowed by the export's CSP (`img-src`/`font-src` include `data:`
+and `file:`).
+
+Network: `import_image {url | stockId}` and `search_images` download in `Hub::call` before taking
+the store lock (`tools::prepare`), then run against local assets. MCP tool calls run on a blocking
+thread. Rendering never fetches anything except hotlinked Unsplash photos, which their API terms
+require.
+
 ## WebSocket protocol
 
 Connect to `ws://127.0.0.1:<port>/ws?t=<token>`. All messages are JSON text frames.

@@ -150,7 +150,18 @@ off and turn into a pile of layers. Find names with `search_icons` (for example
 - For a translucent version of a token color, use
   `color-mix(in srgb, var(--color-accent) 30%, transparent)`.
 
-## 8. What the HTML importer accepts
+## 8. Images
+
+- Put images in the file with `import_image`: from a `url`, a local `path`, a `dataUri`, or a
+  `stockId` from `search_images`. It returns a `src` like `/asset/3f9a….png` to use in
+  `<img src>` or `background-image: url("/asset/…")`. Pass `parentId` to insert a sized `<img>`
+  directly. Don't hand-type base64; it gets moved into the asset store anyway.
+- `search_images` finds stock photos (Unsplash with a key, otherwise openly licensed Openverse
+  images). Write a concrete query ("rowing boats at dawn, mist"), pick by subject and mood, and
+  keep the attribution that `import_image` stores; credit the photographer where it ships.
+- Give every meaningful image real `alt` text. Use `object-fit: cover` on fixed-size frames.
+
+## 9. What the HTML importer accepts
 
 Write HTML the way you normally would. `write_html` parses it like a browser: named entities
 (`&nbsp;`, `&mdash;`, a bare `&` in "Paper & Ink"), `<img>` and `<br>` without a slash, and
@@ -167,7 +178,7 @@ blocks and stylesheets are ignored, and classes are kept as metadata but don't a
 - `index` in `insert-children` counts every child, text included: index 0 puts an icon before
   a button's label.
 
-## 9. Check your work
+## 10. Check your work
 
 Look at what you made. `screenshot` renders any artboard or layer from the live file
 (unsaved edits included) and shows it to you as an image; `get_bounds` measures the rendered
@@ -189,7 +200,7 @@ boxes. Both render the way the canvas does, with the file's tokens.
   of it after your last change to it. If rendering is unavailable (no Chromium-based browser
   installed), say so and fall back to `get_tree_summary` and `get_styles`.
 
-## 10. Finishing and handing off
+## 11. Finishing and handing off
 
 - Layers you edit or create are marked in the editor as yours for 2 minutes after your last
   edit; other agents can't change them meanwhile. Claim a whole area up front with

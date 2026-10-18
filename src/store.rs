@@ -1,6 +1,9 @@
 //! Open documents, per-file history, the local library and debounced atomic saves.
-use crate::document::{Document, Page, Result};
-use crate::presence::{Actor, Claims};
+use crate::{
+    assets,
+    document::{Document, Page, Result},
+    presence::{Actor, Claims},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -74,6 +77,9 @@ struct FileFormat<D> {
     format: String,
     version: u32,
     document: D,
+    /// Base64 copies of the assets the document references, so the file is self-contained.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    assets: BTreeMap<String, String>,
 }
 
 pub fn read_document(path: &Path) -> Result<Document> {
@@ -94,13 +100,28 @@ pub fn read_document(path: &Path) -> Result<Document> {
     let doc: Document =
         serde_json::from_value(value["document"].clone()).map_err(|e| e.to_string())?;
     doc.validate()?;
+    if let Some(embedded) = value.get("assets").and_then(Value::as_object) {
+        let dir = assets::dir_for_file(path);
+        for (name, data) in embedded {
+            // A damaged embedded asset only loses that image, not the file.
+            if let Err(e) = assets::restore(&dir, name, data.as_str().unwrap_or_default()) {
+                eprintln!("{}: {e}", path.display());
+            }
+        }
+    }
     Ok(doc)
 }
 pub fn write_document(path: &Path, doc: &Document) -> Result<()> {
+    let dir = assets::dir_for_file(path);
+    let assets = assets::references(doc)
+        .into_iter()
+        .filter_map(|name| Some((name.clone(), assets::encode(&assets::read(&dir, &name)?))))
+        .collect();
     let bytes = serde_json::to_vec(&FileFormat {
         format: "cardboard".into(),
         version: 2,
         document: doc,
+        assets,
     })
     .map_err(|e| e.to_string())?;
     write_atomic(path, &bytes)
@@ -265,7 +286,8 @@ impl Store {
         s.files
             .insert(id.clone(), OpenFile::new(doc, Some(path.into())));
         s.tabs.push(id.clone());
-        s.active_file = Some(id);
+        s.active_file = Some(id.clone());
+        s.migrate_images(&id);
         Ok(s)
     }
     /// A library directory: restores tabs and imports a legacy workspace on first run.
@@ -325,6 +347,64 @@ impl Store {
         }
         self.library_seq += 1;
         Ok(count)
+    }
+
+    /// The library-wide asset store, if this session has a directory.
+    pub fn assets_dir(&self) -> Option<PathBuf> {
+        self.library.as_ref().map(|l| l.join(assets::DIR))
+    }
+    /// Where an open file's assets live: next to its library (also for files opened from
+    /// elsewhere), else the session's store.
+    pub fn assets_for(&self, id: &str) -> Option<PathBuf> {
+        match self.path_of(id) {
+            Some(path) => Some(assets::dir_for_file(path)),
+            None => self.assets_dir(),
+        }
+    }
+    /// Every directory the editor may serve `/asset/` requests from.
+    pub fn asset_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = self.assets_dir().into_iter().collect();
+        for id in self.files.keys() {
+            if let Some(dir) = self.assets_for(id)
+                && !dirs.contains(&dir)
+            {
+                dirs.push(dir);
+            }
+        }
+        dirs
+    }
+    /// The Unsplash access key: `UNSPLASH_ACCESS_KEY`, else the library setting `unsplashAccessKey`.
+    pub fn unsplash_key(&self) -> Option<String> {
+        std::env::var("UNSPLASH_ACCESS_KEY")
+            .ok()
+            .or_else(|| {
+                self.meta.settings["unsplashAccessKey"]
+                    .as_str()
+                    .map(String::from)
+            })
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty())
+    }
+    /// Older files embed images as base64 `data:` URLs; move them into the asset store when the
+    /// file opens. The rewrite is saved like an edit but is not an undo step.
+    fn migrate_images(&mut self, id: &str) {
+        let Some(dir) = self.assets_for(id) else {
+            return;
+        };
+        let Some(file) = self.files.get_mut(id) else {
+            return;
+        };
+        match assets::externalize(&mut file.doc, &dir) {
+            Ok(true) => {
+                file.dirty = true;
+                self.last_edit = Instant::now();
+            }
+            Ok(false) => {}
+            Err(e) => eprintln!(
+                "Could not move images of {} into the asset store: {e}",
+                file.doc.name
+            ),
+        }
     }
 
     pub fn file_id(&self, args: &Value) -> Result<String> {
@@ -651,6 +731,7 @@ impl Store {
                 let id = doc.id.clone();
                 self.files
                     .insert(id.clone(), OpenFile::new(doc, Some(path.clone())));
+                self.migrate_images(&id);
                 id
             }
         };

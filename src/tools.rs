@@ -1,6 +1,7 @@
 use crate::{
+    assets,
     document::{Document, Node, Result, Store, Styles},
-    html, presence,
+    html, presence, stock,
 };
 use serde_json::{Value, json};
 
@@ -535,7 +536,13 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
     let mut args = args.clone();
     normalize_ids(&mut args);
     let args = &args;
+    if needs_network(name, args) {
+        let ctx = context(store, args);
+        return call(store, name, &prepare(name, args, &ctx)?);
+    }
     match name {
+        "search_images" => return stock::search(args, store.unsplash_key().as_deref()),
+        "import_image" => return import_image(store, args),
         "get_guide" => {
             return match string(args, "topic")? {
                 "cardboard-design" => Ok(json!({"guide":GUIDE})),
@@ -628,7 +635,8 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
         ));
     }
     let doc = store.file(&id)?;
-    if let Some(mut value) = read(doc, name, args)? {
+    let asset_dir = store.assets_for(&id);
+    if let Some(mut value) = read(doc, name, args, asset_dir.as_deref())? {
         value["fileId"] = json!(id);
         value["revision"] = json!(doc.revision);
         return Ok(value);
@@ -642,6 +650,11 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
         let file = store.open(&id)?;
         queried = presence::check(&file.doc, &file.claims, actor, name, args)?;
     }
+    // Pasted or agent-written base64 images move into the asset store as part of the same edit.
+    let externalize = |doc: &mut Document| match &asset_dir {
+        Some(dir) => assets::externalize(doc, dir).map(|_| ()),
+        None => Ok(()),
+    };
     let mut result = match name {
         "start_working_on_nodes" => {
             let ids = string_ids(args, "nodeIds")?;
@@ -682,7 +695,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
                     return Err("Batch operations must target the batch's file".into());
                 }
                 let result = if READS.contains(&tool) {
-                    read(doc, tool, &op_args).map(Option::unwrap)
+                    read(doc, tool, &op_args, asset_dir.as_deref()).map(Option::unwrap)
                 } else if MUTATIONS.contains(&tool) {
                     mutate(doc, tool, &op_args)
                 } else {
@@ -694,9 +707,14 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
                 };
                 results.push(result.map_err(|e| format!("{tool}: {e}"))?);
             }
+            externalize(doc)?;
             Ok(json!({"results":results}))
         })?,
-        _ if MUTATIONS.contains(&name) => store.transaction(&id, |doc| mutate(doc, name, args))?,
+        _ if MUTATIONS.contains(&name) => store.transaction(&id, |doc| {
+            let value = mutate(doc, name, args)?;
+            externalize(doc)?;
+            Ok(value)
+        })?,
         _ => return Err(format!("Unknown tool: {name}")),
     };
     if let Some(actor) = actor.as_ref().filter(|_| claims_apply) {
@@ -718,7 +736,12 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
 }
 
 /// Read tools, or `None` when `name` is not one.
-fn read(doc: &Document, name: &str, args: &Value) -> Result<Option<Value>> {
+fn read(
+    doc: &Document,
+    name: &str,
+    args: &Value,
+    assets: Option<&std::path::Path>,
+) -> Result<Option<Value>> {
     let depth = args.get("depth").and_then(Value::as_u64);
     let page = |id: &str| {
         doc.pages
@@ -823,11 +846,19 @@ fn read(doc: &Document, name: &str, args: &Value) -> Result<Option<Value>> {
                 (_, Ok(id)) => html::nodes_html(doc, page(id)?.artboards.iter().collect(), false),
                 _ => html::document_html(doc, false),
             };
+            let html = match (assets, args.get("assets").and_then(Value::as_str)) {
+                (None, _) => html,
+                (Some(dir), None | Some("inline")) => {
+                    assets::embed(&html, dir, assets::Embed::Inline)
+                }
+                (Some(dir), Some("files")) => assets::embed(&html, dir, assets::Embed::Files(dir)),
+                _ => return Err("assets must be inline or files".into()),
+            };
             limited(
                 json!({"html":html}),
                 "html",
                 args,
-                "export one artboard or node with nodeId",
+                "export one artboard or node with nodeId, or link images with assets: \"files\"",
             )
         }
         "find_nodes" => {
@@ -1541,8 +1572,8 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "export_html",
-        "Export ordinary HTML/CSS without editor attributes: one artboard or node (nodeId), a page (pageId), or by default the active page. Long output is truncated with a marker.",
-        json!({"nodeId":s,"pageId":s,"maxChars":max}),
+        "Export ordinary HTML/CSS without editor attributes: one artboard or node (nodeId), a page (pageId), or by default the active page. Images and fonts from the asset store are inlined as data URIs (assets: inline, the default) or linked as file:// URLs on this machine (assets: files, much smaller). Long output is truncated with a marker.",
+        json!({"nodeId":s,"pageId":s,"maxChars":max,"assets":{"type":"string","enum":["inline","files"]}}),
         vec!["fileId"],
         true,
     );
@@ -1694,6 +1725,20 @@ pub fn definitions() -> Vec<Value> {
         false,
     );
     add(
+        "import_image",
+        "Store an image in the library's asset store from exactly one of url, path (local file), dataUri, or stockId (from search_images), and return its src (\"/asset/<sha256>.<ext>\") for write_html, set_attributes or url() in update_styles. With parentId, also inserts an <img> sized from the image (width overrides the display width). Prefer this over base64 data URIs; those are moved into the store automatically anyway.",
+        json!({"url":s,"path":s,"dataUri":s,"stockId":s,"parentId":s,"index":{"type":"integer","minimum":0},"alt":s,"name":s,"width":{"type":"number","exclusiveMinimum":0}}),
+        vec![],
+        false,
+    );
+    add(
+        "search_images",
+        "Search stock photos. Uses Unsplash when UNSPLASH_ACCESS_KEY is configured, otherwise Openverse (openly licensed, no key). Results include stockId, a preview src, size, alt text, photographer and the attribution to keep. Place one with import_image {stockId}.",
+        json!({"query":s,"count":{"type":"integer","minimum":1,"maximum":30},"orientation":{"type":"string","enum":["landscape","portrait","squarish"]},"provider":{"type":"string","enum":["unsplash","openverse"]}}),
+        vec!["query"],
+        true,
+    );
+    add(
         "batch",
         "Run several editing tools on one file as a single atomic, undoable step. Read tools (get_*, find_nodes, export_html) may be mixed in and see the edits before them.",
         json!({"operations":{"type":"array","items":{"type":"object","properties":{"tool":s,"args":obj},"required":["tool"],"additionalProperties":false}}}),
@@ -1739,5 +1784,183 @@ pub fn definitions() -> Vec<Value> {
         vec!["icon", "targetNodeId", "fileId"],
         false,
     );
+    for tool in &mut tools {
+        if matches!(
+            tool["name"].as_str(),
+            Some("import_image" | "search_images")
+        ) {
+            tool["annotations"]["openWorldHint"] = json!(true);
+        }
+    }
     tools
+}
+
+// Assets: images (and fonts) imported into the library store.
+
+/// What the network step of a tool needs from the store, copied out so the lock can be released.
+pub struct Context {
+    pub assets: Option<std::path::PathBuf>,
+    pub unsplash_key: Option<String>,
+}
+pub fn context(store: &Store, args: &Value) -> Context {
+    let file = match args.get("fileId") {
+        Some(_) => store.file_id(args).ok(),
+        None => store.active_file.clone(),
+    };
+    Context {
+        assets: file
+            .and_then(|id| store.assets_for(&id))
+            .or_else(|| store.assets_dir()),
+        unsplash_key: store.unsplash_key(),
+    }
+}
+/// Whether a call must download something first. `Hub::call` does that without holding the store
+/// lock (see `prepare`), so a slow network never stalls the editor.
+pub fn needs_network(name: &str, args: &Value) -> bool {
+    match name {
+        "import_image" => args.get("url").is_some() || args.get("stockId").is_some(),
+        _ => false,
+    }
+}
+/// Do a tool's network work and return equivalent arguments that only refer to local assets.
+pub fn prepare(name: &str, args: &Value, ctx: &Context) -> Result<Value> {
+    let mut out = args.clone();
+    let obj = out.as_object_mut().ok_or("Arguments must be an object")?;
+    let store_dir = || {
+        ctx.assets
+            .clone()
+            .ok_or("This session has no asset store; open a file saved in a library")
+    };
+    if name == "import_image" {
+        if let Some(url) = obj.remove("url") {
+            let bytes = assets::fetch(
+                url.as_str().ok_or("url must be a string")?,
+                &[],
+                assets::MAX_BYTES,
+            )?;
+            obj.insert("asset".into(), json!(assets::put(&store_dir()?, &bytes)?));
+        }
+        if let Some(id) = obj.remove("stockId") {
+            let chosen = stock::choose(
+                id.as_str().ok_or("stockId must be a string")?,
+                ctx.unsplash_key.as_deref(),
+            )?;
+            obj.insert("stock".into(), chosen.result);
+            match (chosen.src, chosen.bytes) {
+                (Some(src), _) => obj.insert("hotlink".into(), json!(src)),
+                (None, Some(bytes)) => {
+                    obj.insert("asset".into(), json!(assets::put(&store_dir()?, &bytes)?))
+                }
+                (None, None) => None,
+            };
+        }
+    }
+    Ok(out)
+}
+
+fn import_image(store: &mut Store, args: &Value) -> Result<Value> {
+    let parent = args.get("parentId").and_then(Value::as_str);
+    let file = match (parent, args.get("fileId")) {
+        (Some(_), _) | (None, Some(_)) => Some(store.file_id(args)?),
+        _ => store.active_file.clone(),
+    };
+    let stock = args.get("stock").cloned().unwrap_or(json!({}));
+    let mut result = json!({});
+    let (src, size) = match args.get("hotlink").and_then(Value::as_str) {
+        Some(url) => (
+            url.to_string(),
+            stock["width"].as_u64().zip(stock["height"].as_u64()),
+        ),
+        None => {
+            let dir = file
+                .as_deref()
+                .and_then(|id| store.assets_for(id))
+                .or_else(|| store.assets_dir())
+                .ok_or("This session has no asset store; open a file saved in a library")?;
+            let (name, bytes) = match args.get("asset").and_then(Value::as_str) {
+                Some(name) => (
+                    name.to_string(),
+                    assets::read(&dir, name).ok_or("That asset is not in the store")?,
+                ),
+                None => {
+                    let bytes = assets::load(args)?;
+                    (assets::put(&dir, &bytes)?, bytes)
+                }
+            };
+            if assets::is_font(name.rsplit('.').next().unwrap_or("")) {
+                return Err("This file is a font, not an image".into());
+            }
+            result["asset"] = json!(name);
+            result["bytes"] = json!(bytes.len());
+            let size = assets::image_size(&bytes).map(|(w, h)| (w as u64, h as u64));
+            (assets::reference(&name), size)
+        }
+    };
+    result["src"] = json!(src);
+    if let Some((w, h)) = size {
+        result["width"] = json!(w);
+        result["height"] = json!(h);
+    }
+    for key in [
+        "provider",
+        "attribution",
+        "license",
+        "photographer",
+        "sourceUrl",
+    ] {
+        if stock
+            .get(key)
+            .is_some_and(|v| v.as_str().is_some_and(|v| !v.is_empty()))
+        {
+            result[key] = stock[key].clone();
+        }
+    }
+    let Some(parent) = parent else {
+        return Ok(result);
+    };
+    let id = file.expect("parentId resolves a file");
+    let alt = args
+        .get("alt")
+        .and_then(Value::as_str)
+        .or(stock["alt"].as_str())
+        .unwrap_or("");
+    let width = args.get("width").and_then(Value::as_f64);
+    let style = match size {
+        Some((w, h)) if w > 0 => {
+            let display = width.unwrap_or((w as f64).min(800.0)).round();
+            format!(
+                "width:{display}px;height:{}px;object-fit:cover;flex-shrink:0",
+                (display * h as f64 / w as f64).round()
+            )
+        }
+        _ => format!(
+            "width:{}px;height:auto;flex-shrink:0",
+            width.unwrap_or(400.0).round()
+        ),
+    };
+    let mut img = format!(
+        "<img layer-name=\"{}\" src=\"{}\" alt=\"{}\" style=\"{style}\"",
+        html::escape(args.get("name").and_then(Value::as_str).unwrap_or("Image")),
+        html::escape(&src),
+        html::escape(alt),
+    );
+    for (attr, key) in [
+        ("data-attribution", "attribution"),
+        ("data-source-url", "sourceUrl"),
+        ("data-license", "license"),
+    ] {
+        if let Some(v) = stock[key].as_str().filter(|v| !v.is_empty()) {
+            img.push_str(&format!(" {attr}=\"{}\"", html::escape(v)));
+        }
+    }
+    img.push_str(" />");
+    let mut write = json!({"targetNodeId":parent,"mode":"insert-children","html":img});
+    if let Some(index) = args.get("index") {
+        write["index"] = index.clone();
+    }
+    let inserted = store.transaction(&id, |doc| mutate(doc, "write_html", &write))?;
+    result["nodeId"] = inserted["nodeIds"][0].clone();
+    result["fileId"] = json!(id);
+    result["revision"] = json!(store.file(&id)?.revision);
+    Ok(result)
 }

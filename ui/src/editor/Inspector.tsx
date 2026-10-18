@@ -756,21 +756,36 @@ function GradientEditor({ doc, gradient, onPreview, onPreviewEnd, onCommit }: { 
   );
 }
 
+/** Put an image file in the library's asset store and resolve with its `/asset/...` src. */
+function storeImage(f: File): Promise<string | undefined> {
+  if (f.size > 32 * 1024 * 1024) {
+    toast('Images over 32 MB are not supported');
+    return Promise.resolve(undefined);
+  }
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUri = String(reader.result);
+      const stored = await call<{ src: string }>('import_image', { dataUri });
+      resolve(stored?.src);
+    };
+    reader.onerror = () => resolve(undefined);
+    reader.readAsDataURL(f);
+  });
+}
+
 function pickImage(done: (url: string) => void) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'image/*';
-  input.onchange = () => {
+  input.onchange = async () => {
     const f = input.files?.[0];
-    if (!f) return;
-    if (f.size > 8 * 1024 * 1024) return toast('Images over 8 MB are not supported yet');
-    const reader = new FileReader();
-    reader.onload = () => done(String(reader.result));
-    reader.readAsDataURL(f);
+    const src = f && (await storeImage(f));
+    if (src) done(src);
   };
   input.click();
 }
-export { pickImage };
+export { pickImage, storeImage };
 
 function BorderSection({ doc, node, set, pv, pvEnd }: SectionProps & { doc: CardboardDocument }) {
   const s = node.styles;

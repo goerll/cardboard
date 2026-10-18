@@ -73,6 +73,18 @@ impl Hub {
             return crate::icons::search(args);
         }
         crate::icons::prefetch(name, args)?;
+        // Downloads happen outside the lock; the tool then runs on local assets only.
+        let prepared;
+        let args = if tools::needs_network(name, args) {
+            let ctx = tools::context(&self.lock(), args);
+            prepared = tools::prepare(name, args, &ctx)?;
+            &prepared
+        } else if name == "search_images" {
+            let key = self.lock().unsplash_key();
+            return crate::stock::search(args, key.as_deref());
+        } else {
+            args
+        };
         let (result, generation) = {
             let mut store = self.lock();
             if self.is_retired() {

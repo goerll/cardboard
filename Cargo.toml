@@ -17,9 +17,11 @@ html5ever = "0.40"
 # Already in the tree via axum; used to drive headless Chromium for screenshots.
 tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 base64 = "0.22"
+# One blocking HTTP client for icons, fonts and images.
 ureq = "3.4"
 # Icon bodies from Iconify are XML; sanitized with a strict reader.
 quick-xml = "0.38.4"
+sha2 = "0.11"
 
 [workspace]
 exclude = ["desktop"]

@@ -22,7 +22,7 @@ Every layer is real HTML and CSS, and every file stays on your machine.
 - **Real HTML, real CSS.** Flexbox, gradients, shadows and fonts render in an actual browser engine. What you draw is what ships, and any layer exports as HTML or JSX.
 - **Agents in the room.** Cardboard ships an MCP server (Model Context Protocol, the standard way AI agents call tools). Point Claude Code, Codex, Cursor or any MCP client at it and watch the agent edit your canvas live, in small steps you can steer.
 - **Same canvas, same undo.** Your edits and the agent's go through one engine, so `Ctrl Z` undoes either.
-- **Files you own.** Designs are plain `.cardboard` files in `~/Documents/Cardboard`. No account, no cloud, works offline. Back them up, sync them, put them in git.
+- **Files you own.** Designs are plain `.cardboard` files in `~/Documents/Cardboard`. No account, no cloud, works offline. Back them up, sync them, put them in git. Images are kept once in the library's `.assets` folder and embedded in each file that uses them, so a copied file still opens with its pictures.
 
 ## Install
 

@@ -4,7 +4,7 @@ import { call, getState, request, subscribe } from '../api';
 import type { CardboardDocument } from '../types';
 import { activePage, indexPage, isTextLeaf, nodeToHtml } from '../lib/tree';
 import { CanvasEngine, type Tool } from './engine';
-import { copyHtml, Inspector, pickImage } from './Inspector';
+import { copyHtml, Inspector, pickImage, storeImage } from './Inspector';
 import { LeftPanel } from './LeftPanel';
 import { edit, editorState, engineRef, select, setEditor, toast, useEditor } from './store';
 import { Popover, Select } from '../ui/controls';
@@ -128,16 +128,18 @@ async function insertHtmlAt(html: string, preferArtboard = true) {
   select(r?.nodeIds?.length ? r.nodeIds : [ab.nodeId]);
 }
 
+function insertSizedImage(url: string) {
+  const img = new Image();
+  img.onload = () => {
+    const w = Math.min(img.naturalWidth || 400, 800);
+    const h = Math.round(img.naturalWidth ? (img.naturalHeight / img.naturalWidth) * w : w * 0.75);
+    insertHtmlAt(`<img layer-name="Image" src="${url}" style="width:${w}px;height:${h}px;object-fit:cover;flex-shrink:0" />`);
+  };
+  img.src = url;
+}
+
 function insertImage() {
-  pickImage((url) => {
-    const img = new Image();
-    img.onload = () => {
-      const w = Math.min(img.naturalWidth, 800);
-      const h = Math.round((img.naturalHeight / img.naturalWidth) * w);
-      insertHtmlAt(`<img layer-name="Image" src="${url}" style="width:${w}px;height:${h}px;object-fit:cover;flex-shrink:0" />`);
-    };
-    img.src = url;
-  });
+  pickImage(insertSizedImage);
 }
 
 function Canvas({ fileId }: { fileId: string }) {
@@ -348,18 +350,7 @@ function Shortcuts({ doc }: { doc: CardboardDocument }) {
       const file = [...dt.files].find((f) => f.type.startsWith('image/'));
       if (file) {
         e.preventDefault();
-        const reader = new FileReader();
-        reader.onload = () => {
-          const url = String(reader.result);
-          const img = new Image();
-          img.onload = () => {
-            const w = Math.min(img.naturalWidth, 800);
-            const h = Math.round((img.naturalHeight / img.naturalWidth) * w);
-            insertHtmlAt(`<img layer-name="Image" src="${url}" style="width:${w}px;height:${h}px;object-fit:cover;flex-shrink:0" />`);
-          };
-          img.src = url;
-        };
-        reader.readAsDataURL(file);
+        storeImage(file).then((url) => url && insertSizedImage(url));
         return;
       }
       let html = dt.getData('text/html');

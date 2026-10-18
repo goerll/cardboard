@@ -14,7 +14,7 @@ use crate::hub::Hub;
 use axum::{
     Router,
     extract::{
-        Query, State,
+        Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode, Uri, header},
@@ -56,6 +56,7 @@ pub async fn run_server(hub: Arc<Hub>, port: u16) -> std::io::Result<Server> {
     };
     let router = Router::new()
         .route("/ws", get(socket))
+        .route("/asset/{name}", get(asset))
         .fallback(get(page))
         .with_state(app);
     let task = tokio::spawn(async move {
@@ -167,6 +168,36 @@ async fn page(
         response.headers_mut().insert(header::SET_COOKIE, cookie);
     }
     response
+}
+
+/// Stored images and fonts. Not token-gated: names are SHA-256 content hashes, so a URL can only
+/// be formed by someone who already has the bytes, and the dashboard's opaque-origin thumbnail
+/// iframes cannot send the session cookie. The CSP sandbox keeps an SVG opened directly from
+/// running script on this origin.
+async fn asset(State(app): State<App>, Path(name): Path<String>) -> Response {
+    let dirs = app.hub.lock().asset_dirs();
+    for dir in dirs {
+        let Some(path) = crate::assets::path(&dir, &name) else {
+            break;
+        };
+        if let Ok(Ok(bytes)) = tokio::task::spawn_blocking(move || std::fs::read(path)).await {
+            let ext = name.rsplit('.').next().unwrap_or("");
+            return (
+                [
+                    (header::CONTENT_TYPE, crate::assets::mime(ext)),
+                    (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                    (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+                    (
+                        header::CONTENT_SECURITY_POLICY,
+                        "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+                    ),
+                ],
+                bytes,
+            )
+                .into_response();
+        }
+    }
+    StatusCode::NOT_FOUND.into_response()
 }
 
 async fn socket(

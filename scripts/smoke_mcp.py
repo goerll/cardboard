@@ -73,7 +73,7 @@ def main():
         client = Client(binary, document)
         try:
             tools = client.request("tools/list", {})["tools"]
-            assert len(tools) == 52, len(tools)
+            assert len(tools) == 54, len(tools)
             guide = client.value("get_guide", {"topic": "cardboard-design"})
             assert guide["guide"]
             file_id = client.value("list_resources", {})["resources"][0]["id"]
@@ -93,7 +93,14 @@ def main():
                 "fileId": file_id, "styles": {"background-color": "#f4f4f4"},
             })["nodes"]
             assert [h["id"] for h in hits] == [child], hits
+            pixel = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA"
+                     "DUlEQVR4nGNgYPj/HwADAgH/eL9GtQAAAABJRU5ErkJggg==")
+            image = client.value("import_image", {
+                "fileId": file_id, "dataUri": pixel, "parentId": frame, "alt": "Pixel",
+            })
+            assert image["src"].startswith("/asset/") and image["width"] == 1, image
             exported = client.value("export_html", {"fileId": file_id})["html"]
+            assert pixel.split(",")[1] in exported and "/asset/" not in exported
             assert "Hello &amp; Cardboard" in exported and "background-color:#f4f4f4" in exported
             assert "data-cardboard-id" not in exported
             failure = client.tool("move_nodes", {
@@ -119,7 +126,7 @@ def main():
         finally:
             reopened.close()
     relay(binary)
-    print("MCP smoke passed: 52 tools, editing, search, recoverable errors, export, restart persistence")
+    print("MCP smoke passed: 54 tools, editing, search, image assets, recoverable errors, export, restart persistence")
 
 
 def relay(binary):

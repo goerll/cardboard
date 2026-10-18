@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod doctor;
 pub mod document;
 pub mod html;
@@ -9,5 +10,6 @@ pub mod presence;
 pub mod relay;
 pub mod render;
 pub mod server;
+pub mod stock;
 pub mod store;
 pub mod tools;
