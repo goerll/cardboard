@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { FileText, LayoutGrid, Plus, X } from 'lucide-react';
+import { ArrowUpCircle, FileText, LayoutGrid, Plus, X } from 'lucide-react';
 import { call, onError, useServer } from './api';
 import { Dashboard } from './Dashboard';
 import { Editor } from './editor/Editor';
@@ -71,6 +71,7 @@ export function App() {
           <Plus size={14} />
         </button>
         <div className="tabbar-drag" />
+        <UpdatePill />
       </div>
       <div className="content">
         {active && open ? <Editor key={active} fileId={active} doc={open.doc} canUndo={open.canUndo} canRedo={open.canRedo} /> : <Dashboard />}
@@ -87,6 +88,26 @@ function Toast() {
   return (
     <div className="toast" key={t.id}>
       {t.text}
+    </div>
+  );
+}
+
+/** Quiet notice once an update is downloaded and verified. Ignoring it is fine: it installs on quit. */
+function UpdatePill() {
+  const update = useServer((s) => s.update);
+  if (update?.state !== 'ready' || !update.version) return null;
+  return (
+    <div className="update-pill" title={`Cardboard ${update.version} is downloaded. It installs when you restart or quit.`}>
+      <ArrowUpCircle size={13} />
+      <span>Update ready</span>
+      {update.notesUrl && (
+        <a href={update.notesUrl} target="_blank" rel="noreferrer">
+          What's new
+        </a>
+      )}
+      <button type="button" onClick={() => call('restart_to_update')}>
+        Restart
+      </button>
     </div>
   );
 }

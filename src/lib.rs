@@ -17,3 +17,4 @@ pub mod stock;
 pub mod store;
 pub mod theme;
 pub mod tools;
+pub mod update;

@@ -72,3 +72,47 @@ jobs:
         with:
           files: dist/cardboard-${{ matrix.name }}.*
           generate_release_notes: true
+
+  # Signs every archive for the in-app updater (src/update.rs, docs/releasing.md). Runs once all
+  # platforms are built; until then clients see the release as "not available yet".
+  sign:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: cardboard-*
+          merge-multiple: true
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign && minisign -v
+      - name: Sign archives
+        env:
+          # The whole key file (comment line + key line) from `minisign -G -W`.
+          CARDBOARD_UPDATE_KEY: ${{ secrets.CARDBOARD_UPDATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CARDBOARD_UPDATE_KEY" ]; then
+            echo "::error::The CARDBOARD_UPDATE_KEY secret is missing. Refusing to publish unsigned updates; see docs/releasing.md."
+            exit 1
+          fi
+          key="$RUNNER_TEMP/update.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$CARDBOARD_UPDATE_KEY" > "$key")
+          chmod 600 "$key"
+          version="${GITHUB_REF_NAME#v}"
+          shopt -s nullglob
+          archives=(dist/cardboard-*.tar.gz dist/cardboard-*.zip)
+          [ "${#archives[@]}" -eq 4 ] || { echo "::error::expected 4 archives, found ${#archives[@]}"; exit 1; }
+          for file in "${archives[@]}"; do
+            name="$(basename "$file")"
+            # The client checks both fields, so a signature can't be reused for another file or release.
+            minisign -S -s "$key" -m "$file" -x "$file.minisig" -t "cardboard file:$name version:$version" < /dev/null
+            # Fails loudly if the secret doesn't match the key compiled into the app.
+            minisign -V -H -p packaging/update.pub -m "$file" -x "$file.minisig"
+          done
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.minisig
+          fail_on_unmatched_files: true

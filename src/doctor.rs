@@ -273,6 +273,8 @@ pub fn run(socket: &Path, library: &Path) -> bool {
         );
     }
 
+    updates(&mut r);
+
     let browsers = [
         "chromium",
         "chromium-browser",
@@ -293,4 +295,50 @@ pub fn run(socket: &Path, library: &Path) -> bool {
         ),
     }
     !r.failed
+}
+
+/// Version, latest release and whether this copy updates itself.
+fn updates(r: &mut Report) {
+    use crate::update::{self, Found, Install, State};
+    let install = Install::current();
+    let staged = install
+        .as_ref()
+        .ok()
+        .and_then(|i| update::pending(i, &State::load(i)));
+    let latest = update::check();
+    let detail = match &latest {
+        Ok(Found::UpToDate(_)) => format!("{} (latest)", update::CURRENT),
+        Ok(Found::NotYet(v)) => format!("{}, {v} is being published", update::CURRENT),
+        Ok(Found::Available(release)) => {
+            format!("{}, latest is {}", update::CURRENT, release.version)
+        }
+        Err(e) => format!("{} (couldn't check for updates: {e})", update::CURRENT),
+    };
+    let behind = matches!(latest, Ok(Found::Available(_)));
+    let fix = match (&install, &staged) {
+        (_, Some(_)) => None,
+        (Ok(_), None) if behind => Some("run `cardboard update`, or restart the app".to_string()),
+        (Err(_), None) if behind => Some("update it the way you installed it".to_string()),
+        _ => None,
+    };
+    let level = if behind && staged.is_none() {
+        Level::Warn
+    } else {
+        Level::Ok
+    };
+    r.line(level, "version", &detail, fix.as_deref());
+    let status = match (&install, &staged) {
+        (Err(reason), _) => format!("off: {reason}"),
+        (Ok(_), _) if update::disabled_by_env().is_some() => {
+            format!("off: {}", update::disabled_by_env().unwrap_or_default())
+        }
+        (Ok(_), Some(v)) => {
+            format!("{v} is downloaded and verified; it installs when Cardboard restarts")
+        }
+        (Ok(i), None) if !State::load(i).auto_update() => {
+            "automatic updates are off in Settings; `cardboard update` still works".into()
+        }
+        (Ok(i), None) => format!("automatic ({})", i.root.display()),
+    };
+    r.line(Level::Ok, "updates", &status, None);
 }

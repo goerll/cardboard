@@ -1,6 +1,21 @@
 import { useSyncExternalStore } from 'react';
 import type { OpenDoc, Tab } from './types';
 
+/** The desktop app's updater (absent in `cardboard serve`). */
+export interface UpdateStatus {
+  state: 'idle' | 'checking' | 'downloading' | 'ready' | 'disabled' | 'unmanaged';
+  current: string;
+  /** Version downloaded and verified, when `state` is `ready`. */
+  version?: string;
+  notesUrl?: string;
+  managed?: boolean;
+  autoUpdate?: boolean;
+  /** Why updates are off (environment variable, not an installer-managed copy). */
+  reason?: string;
+  lastCheck?: number;
+  error?: string;
+}
+
 /** Everything the server pushes. Documents are replaced wholesale on every push. */
 export interface ServerState {
   connected: boolean;
@@ -10,9 +25,10 @@ export interface ServerState {
   docs: Record<string, OpenDoc>;
   /** Bumped whenever the server reports library changes; the dashboard refetches on change. */
   libraryVersion: number;
+  update: UpdateStatus | null;
 }
 
-let state: ServerState = { connected: false, tabs: [], activeFile: null, library: '', docs: {}, libraryVersion: 0 };
+let state: ServerState = { connected: false, tabs: [], activeFile: null, library: '', docs: {}, libraryVersion: 0, update: null };
 const listeners = new Set<() => void>();
 function set(patch: Partial<ServerState>) {
   state = { ...state, ...patch };
@@ -75,6 +91,9 @@ export function connect() {
         set({ docs });
         break;
       }
+      case 'update':
+        set({ update: msg.update });
+        break;
       case 'library':
         set({ libraryVersion: state.libraryVersion + 1 });
         break;

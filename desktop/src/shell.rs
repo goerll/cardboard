@@ -7,6 +7,10 @@ use std::sync::OnceLock;
 /// Origin of the editor UI; navigation anywhere else opens in the system browser.
 static ORIGIN: OnceLock<String> = OnceLock::new();
 static DEVTOOLS: OnceLock<bool> = OnceLock::new();
+thread_local! {
+    /// The editor window, kept on the UI thread so other threads can ask it to close.
+    static WINDOW: std::cell::RefCell<Option<Window>> = const { std::cell::RefCell::new(None) };
+}
 
 fn same_origin(url: &str) -> bool {
     ORIGIN
@@ -137,10 +141,11 @@ wrap_window_delegate! { pub struct ShellWindow { browser_view: BrowserView } imp
         let Some(window) = window else { return };
         window.add_child_view(Some(&mut View::from(&self.browser_view)));
         window.set_title(Some(&"Cardboard".into()));
+        WINDOW.with(|w| *w.borrow_mut() = Some(window.clone()));
         window.show();
         self.browser_view.request_focus();
     }
-    fn on_window_destroyed(&self, _window: Option<&mut Window>) { quit_message_loop(); }
+    fn on_window_destroyed(&self, _window: Option<&mut Window>) { WINDOW.with(|w| w.borrow_mut().take()); quit_message_loop(); }
     fn can_close(&self, _window: Option<&mut Window>) -> i32 {
         // Let the page run unload handlers (the UI flushes pending edits) before the window goes.
         self.browser_view.browser().and_then(|b| b.host()).map_or(1, |h| h.try_close_browser())
@@ -161,6 +166,18 @@ wrap_window_delegate! { pub struct ShellWindow { browser_view: BrowserView } imp
         1
     }
 } }
+
+wrap_task! { struct CloseWindow {} impl Task {
+    fn execute(&self) {
+        // Same path as the close button: the page flushes pending edits before the window goes.
+        WINDOW.with(|w| match w.borrow().as_ref() { Some(window) => window.close(), None => quit_message_loop() });
+    }
+} }
+
+/// Close the editor window from any thread (the updater's "restart to update").
+pub fn request_close() {
+    post_task(ThreadId::UI, Some(&mut CloseWindow::new()));
+}
 
 /// Must run first: renderer/GPU subprocesses re-execute this binary and exit here.
 pub fn subprocess() -> Option<i32> {
