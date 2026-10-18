@@ -122,6 +122,7 @@ name = "cardboard"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "getrandom 0.3.4",
  "html5ever",
  "rmcp",
@@ -129,6 +130,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tungstenite",
 ]
 
 [[package]]

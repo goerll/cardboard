@@ -14,6 +14,9 @@ axum = { version = "0.8.4", default-features = false, features = ["http1", "toki
 rust-embed = "8.7"
 getrandom = "0.3"
 html5ever = "0.40"
+# Already in the tree via axum; used to drive headless Chromium for screenshots.
+tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
+base64 = "0.22"
 
 [workspace]
 exclude = ["desktop"]

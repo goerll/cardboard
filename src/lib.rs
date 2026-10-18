@@ -3,6 +3,7 @@ pub mod html;
 pub mod hub;
 pub mod import;
 pub mod mcp;
+pub mod render;
 pub mod server;
 pub mod store;
 pub mod tools;

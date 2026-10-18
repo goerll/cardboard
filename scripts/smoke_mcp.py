@@ -71,7 +71,7 @@ def main():
         client = Client(binary, document)
         try:
             tools = client.request("tools/list", {})["tools"]
-            assert len(tools) == 47, len(tools)
+            assert len(tools) == 49, len(tools)
             guide = client.value("get_guide", {"topic": "cardboard-design"})
             assert guide["guide"]
             file_id = client.value("list_resources", {})["resources"][0]["id"]
@@ -100,6 +100,14 @@ def main():
             assert failure.get("isError"), failure
             # A failed command must leave the connection and model usable.
             assert client.value("export_html", {"fileId": file_id})["html"] == exported
+            shot = client.tool("screenshot", {"fileId": file_id, "nodeId": frame})
+            if shot.get("isError"):
+                assert "none was found" in shot["content"][0]["text"], shot
+                print("screenshot skipped: no Chromium-based browser")
+            else:
+                image = [c for c in shot["content"] if c["type"] == "image"]
+                assert image and image[0]["mimeType"] == "image/png", shot["content"][0]
+                assert "image" not in shot["structuredContent"]
         finally:
             client.close()
         reopened = Client(binary, document)
@@ -108,7 +116,7 @@ def main():
             assert reopened.value("export_html", {"fileId": file_id})["html"] == exported
         finally:
             reopened.close()
-    print("MCP smoke passed: 47 tools, editing, search, recoverable errors, export, restart persistence")
+    print("MCP smoke passed: 49 tools, editing, search, recoverable errors, export, restart persistence")
 
 
 if __name__ == "__main__":

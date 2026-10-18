@@ -4,7 +4,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 
-pub const INSTRUCTIONS: &str = "Cardboard is a local HTML/CSS design editor; the person sees your edits live and shares your undo history. Before anything else, read get_guide with topic cardboard-design. Start with get_basic_info and get_selection, and pass fileId and pageId explicitly. Post a short design plan before starting something new, add one visual group per write_html call, reuse layers with duplicate_nodes and move_nodes, and use the file's tokens. Tools report authored CSS, not pixels, so never claim a visual check you did not do. Call finish_working_on_nodes when done.";
+pub const INSTRUCTIONS: &str = "Cardboard is a local HTML/CSS design editor; the person sees your edits live and shares your undo history. Before anything else, read get_guide with topic cardboard-design. Start with get_basic_info and get_selection, and pass fileId and pageId explicitly. Post a short design plan before starting something new, add one visual group per write_html call, reuse layers with duplicate_nodes and move_nodes, and use the file's tokens. Most tools report authored CSS; use screenshot to see your work and get_bounds to measure it after each visual group, and only claim visual checks you actually looked at. Call finish_working_on_nodes when done.";
 pub const GUIDE: &str = include_str!("../guides/design.md");
 
 pub fn string<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
@@ -589,6 +589,7 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
             store.delete(&path)?;
             return Ok(json!({"deleted":path.to_string_lossy()}));
         }
+        "screenshot" | "get_bounds" => return crate::render::prepare(store, name, args)?.run(),
         _ => {}
     }
     let id = store.file_id(args)?;
@@ -634,7 +635,8 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
                 } else {
                     return Err(format!(
                         "{tool} cannot run inside batch: batch takes one file's edits and reads \
-                         (get_*, find_nodes, export_html). Call file, undo and redo tools on their own"
+                         (get_* except get_bounds, find_nodes, export_html). Call file, undo, redo, screenshot and \
+                         get_bounds on their own"
                     ));
                 };
                 results.push(result.map_err(|e| format!("{tool}: {e}"))?);
@@ -1609,6 +1611,20 @@ pub fn definitions() -> Vec<Value> {
             props
         },
         vec!["fileId"],
+        true,
+    );
+    add(
+        "screenshot",
+        "Render an artboard or any node from the live document (unsaved edits included) in headless Chromium and return a PNG you can look at. scale defaults to 1 for artboards and 2 for nodes up to 800px; large images are scaled down, so screenshot a section for detail. path (absolute) also writes the PNG to disk. Needs Chromium, Chrome or Edge installed (or CARDBOARD_BROWSER).",
+        json!({"nodeId":s,"scale":{"type":"number","minimum":0.1,"maximum":4},"path":s}),
+        vec!["nodeId", "fileId"],
+        true,
+    );
+    add(
+        "get_bounds",
+        "Measure rendered layout boxes (x, y, width, height in px relative to the artboard) for nodes and their descendants down to depth (default 1). Flags overflowX/overflowY when content is larger than its box, outsideParent when a box leaves its parent, and hidden. styles lists CSS properties to report as computed values. All nodeIds must share one artboard. Uses the same renderer as screenshot.",
+        json!({"nodeIds":ids,"depth":{"type":"integer","minimum":0,"maximum":10},"styles":ids}),
+        vec!["nodeIds", "fileId"],
         true,
     );
     tools

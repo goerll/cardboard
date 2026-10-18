@@ -47,9 +47,23 @@ impl ServerHandler for CardboardServer {
         _: RequestContext<RoleServer>,
     ) -> std::result::Result<CallToolResponse, ErrorData> {
         let args = Value::Object(request.arguments.unwrap_or_default());
-        let result = match self.store.call(&request.name, &args) {
-            Ok(value) => {
-                let mut r = CallToolResult::success(vec![ContentBlock::text(value.to_string())]);
+        let store = self.store.clone();
+        let name = request.name.clone();
+        let outcome = tokio::task::spawn_blocking(move || store.call(&name, &args))
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        let result = match outcome {
+            Ok(mut value) => {
+                // Images go out as real image content so the agent sees them, not as base64 text.
+                let image = value.as_object_mut().and_then(|o| o.remove("image"));
+                let mut content = vec![ContentBlock::text(value.to_string())];
+                if let Some(image) = image {
+                    content.push(ContentBlock::image(
+                        image["data"].as_str().unwrap_or_default(),
+                        image["mimeType"].as_str().unwrap_or("image/png"),
+                    ));
+                }
+                let mut r = CallToolResult::success(content);
                 r.structured_content = Some(value);
                 r
             }

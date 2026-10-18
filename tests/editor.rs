@@ -1133,3 +1133,143 @@ fn list_files_omits_previews_unless_asked() {
         edit(&mut s, "list_files", json!({"previews":true}))["files"][0]["artboards"][0].clone();
     assert!(rich["html"].as_str().unwrap().contains("Buy now"));
 }
+
+/// Rendering tests need a Chromium-based browser; skip (loudly) where none is installed.
+fn renderer() -> bool {
+    let found = cardboard::render::find_browser().is_ok();
+    if !found {
+        eprintln!("skipping: no Chromium-based browser for rendering");
+    }
+    found
+}
+fn png_size(data: &str) -> (u32, u32) {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .unwrap();
+    assert_eq!(&bytes[1..4], b"PNG");
+    let be = |i: usize| u32::from_be_bytes(bytes[i..i + 4].try_into().unwrap());
+    (be(16), be(20))
+}
+
+#[test]
+fn screenshot_renders_unsaved_edits_and_crops_nodes() {
+    if !renderer() {
+        return;
+    }
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[frame],"styles":{"width":"600px","height":"fit-content","padding":"40px"}}]}),
+    );
+    let card = insert(
+        &mut s,
+        &frame,
+        "<div style=\"width:200px;height:120px;background:var(--color-accent)\"></div>",
+    )[0]
+    .clone();
+    edit(
+        &mut s,
+        "create_tokens",
+        json!({"tokens":[{"name":"--color-accent","value":"#2f7d4f"}]}),
+    );
+    let shot = edit(&mut s, "screenshot", json!({"nodeId":frame}));
+    assert_eq!(
+        shot["bounds"],
+        json!({"x":0.0,"y":0.0,"width":600.0,"height":200.0})
+    );
+    assert_eq!(
+        png_size(shot["image"]["data"].as_str().unwrap()),
+        (600, 200)
+    );
+    // Nodes are cropped from the artboard's layout and default to 2x.
+    let shot = edit(&mut s, "screenshot", json!({"nodeId":card}));
+    assert_eq!(
+        shot["bounds"],
+        json!({"x":40.0,"y":40.0,"width":200.0,"height":120.0})
+    );
+    assert_eq!(shot["scale"], 2.0);
+    assert_eq!(
+        png_size(shot["image"]["data"].as_str().unwrap()),
+        (400, 240)
+    );
+    // Huge artboards are scaled down to keep the payload reasonable.
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[frame],"styles":{"width":"1440px","height":"6000px"}}]}),
+    );
+    let shot = edit(&mut s, "screenshot", json!({"nodeId":frame}));
+    assert!(shot["scale"].as_f64().unwrap() < 1.0 && shot["note"].is_string());
+    let (w, h) = png_size(shot["image"]["data"].as_str().unwrap());
+    assert!(w * h <= 4_000_000 + 10_000, "{w}x{h}");
+    assert!(
+        tools::call(
+            &mut s,
+            "screenshot",
+            &json!({"nodeId":frame,"path":"x.png"})
+        )
+        .is_err()
+    );
+    assert!(
+        tools::call(
+            &mut s,
+            "batch",
+            &json!({"operations":[{"tool":"screenshot","args":{"nodeId":frame}}]})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn get_bounds_measures_layout_overflow_and_computed_styles() {
+    if !renderer() {
+        return;
+    }
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[frame],"styles":{"width":"400px","height":"300px","padding":"20px","flexDirection":"column","gap":"10px"}}]}),
+    );
+    let ids = insert(
+        &mut s,
+        &frame,
+        "<p style=\"margin:0;width:80px;white-space:nowrap;font-size:20px\">Far too long for this box</p><div style=\"width:500px;height:20px\"></div>",
+    );
+    let bounds = edit(
+        &mut s,
+        "get_bounds",
+        json!({"nodeIds":[frame],"depth":1,"styles":["fontSize"]}),
+    );
+    let nodes = bounds["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 3);
+    let by_id = |id: &str| nodes.iter().find(|n| n["id"] == id).unwrap();
+    assert_eq!(by_id(&frame)["width"], 400.0);
+    let text = by_id(&ids[0]);
+    assert_eq!(
+        (text["x"].as_f64(), text["y"].as_f64()),
+        (Some(20.0), Some(20.0))
+    );
+    assert!(text["overflowX"].as_f64().unwrap() > 50.0);
+    assert_eq!(text["styles"]["font-size"], "20px");
+    assert_eq!(text["parentId"], json!(frame));
+    let wide = by_id(&ids[1]);
+    assert_eq!(wide["outsideParent"], true);
+    assert_eq!(
+        wide["y"].as_f64().unwrap(),
+        20.0 + text["height"].as_f64().unwrap() + 10.0
+    );
+    edit(
+        &mut s,
+        "set_node_state",
+        json!({"updates":[{"nodeId":ids[1],"visible":false}]}),
+    );
+    let bounds = edit(&mut s, "get_bounds", json!({"nodeIds":[ids[1]],"depth":0}));
+    assert_eq!(bounds["nodes"][0]["hidden"], true);
+    let err = tools::call(&mut s, "screenshot", &json!({"nodeId":ids[1]})).unwrap_err();
+    assert!(err.contains("no visible size"), "{err}");
+}

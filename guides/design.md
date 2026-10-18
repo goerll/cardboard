@@ -109,6 +109,7 @@ type, not three tints of the same layout.
   The person navigates by those names.
 - Let artboards grow with content. If something gets clipped, set the artboard's height to
   `fit-content` (or remove the fixed height) instead of guessing a bigger number.
+- After each visual group, take a `screenshot` and look at it (see section 9).
 
 ## 6. Line things up
 
@@ -116,7 +117,8 @@ Repeated rows (menus, lists, tables, settings, layer-like trees) need shared col
 icons, badges and trailing buttons fixed-width slots with `flex-shrink: 0`, and keep the slot
 even when a particular row has nothing in it. A `gap` alone won't make columns line up when
 row contents differ. After building three or more similar rows, check that their icons and
-trailing elements sit on the same vertical lines.
+trailing elements sit on the same vertical lines: `get_bounds` on the rows' parent with
+`depth: 2` gives you the x of every slot.
 
 ## 7. Tokens
 
@@ -148,18 +150,25 @@ blocks and stylesheets are ignored, and classes are kept as metadata but don't a
 
 ## 9. Check your work
 
-Cardboard's tools report authored CSS, not pixels. You can't see the canvas through the MCP
-server, so verify honestly:
+Look at what you made. `screenshot` renders any artboard or layer from the live file
+(unsaved edits included) and shows it to you as an image; `get_bounds` measures the rendered
+boxes. Both render the way the canvas does, with the file's tokens.
 
-- Re-read structure and styles with `get_tree_summary` and `get_styles` after a meaningful
-  section is done.
-- If you have a browser available, render `export_html` and look at it, or ask the person
-  what they see. Never say you visually checked something when you only read CSS.
-- Review each finished section against this list and fix what you find before moving on:
-  spacing rhythm, type hierarchy and readability, contrast, alignment and shared columns,
-  content clipped by the artboard, and too much sameness.
+- After each visual group, `screenshot` the section you just built (or the artboard) and
+  look at it before moving on. Layers come back at 2x, so screenshot a section when a full
+  artboard is too small to judge details.
+- Use `get_bounds` for things pixels make easy to miss: `overflowX`/`overflowY` (text or
+  children larger than their box), `outsideParent`, `hidden`, and whether repeated rows share
+  the same x positions. Ask for computed `styles` (say `font-size`, `color`) when the cascade
+  or tokens might not resolve the way you expect.
+- Review each section against this list and fix what you find: spacing rhythm, type
+  hierarchy and readability, contrast, alignment and shared columns, content clipped by the
+  artboard, and too much sameness.
 - Fix problems surgically. Don't throw away a whole section to correct one detail; it's
   frustrating to watch work vanish.
+- Be honest about what you checked. Say you looked at something only if you took a screenshot
+  of it after your last change to it. If rendering is unavailable (no Chromium-based browser
+  installed), say so and fall back to `get_tree_summary` and `get_styles`.
 
 ## 10. Finishing and handing off
 

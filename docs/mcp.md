@@ -12,6 +12,7 @@ MCP uses the official Rust SDK with newline-delimited stdio messages. Desktop cl
 | Edit nodes | `write_html`, `update_styles`, `set_text_content`, `rename_nodes`, `delete_nodes`, `duplicate_nodes`, `move_nodes` |
 | Tokens | `get_tokens`, `create_tokens`, `set_tokens` |
 | Export | `get_jsx`, `export_html` |
+| See and measure | `screenshot`, `get_bounds` |
 | Session and history | `finish_working_on_nodes`, `undo`, `redo` |
 
 Inspect `tools/list` for authoritative JSON schemas. The implementation lives in `src/tools.rs`.
@@ -22,7 +23,7 @@ Inspect `tools/list` for authoritative JSON schemas. The implementation lives in
 2. Call `list_resources` and explicitly choose a `fileId`.
 3. Read `get_basic_info`; inspect relevant children and styles before editing existing work.
 4. Create an artboard or use an existing target.
-5. Insert static HTML, refine styles, and export. Do not claim visual verification until an actual screenshot or UI inspection is available.
+5. Insert static HTML one visual group at a time; after each, call `screenshot` on it and look, and use `get_bounds` to check overflow and alignment. Claim only the visual checks you actually made.
 
 Example arguments to `create_artboard`:
 
@@ -96,11 +97,12 @@ Node ids may be given bare: `581` and `"581"` mean `node-581` (and `pageId: 2` m
 ## Guarantees and limits
 
 - Explicit `fileId` is required by schemas for document tools. A relay does not implicitly pin to the currently visible tab. `open_file` changes the active tab; explicit targets remain independent.
-- Batch commands are atomic: any invalid item rejects the whole batch. Read tools (`get_*`, `find_nodes`, `export_html`) may be mixed into a batch and see the edits before them; file tools and `undo`/`redo` must be called on their own. Successful edits validate the model and save before reporting success. Save errors roll back the model and history.
+- Batch commands are atomic: any invalid item rejects the whole batch. Read tools (`get_*` other than `get_bounds`, `find_nodes`, `export_html`) may be mixed into a batch and see the edits before them; file tools and `undo`/`redo` must be called on their own. Successful edits validate the model and save before reporting success. Save errors roll back the model and history.
 - Undo and redo apply to workspace history. Revisions and ID counters remain monotonic. History is limited to 100 in-memory snapshots.
 - Imported designs cannot execute scripts. `write_html` parses with html5ever (the WHATWG HTML algorithm browsers use), so named entities, unquoted attributes, void elements without `/>` and optional end tags (`p`, `li`, `dt`, `dd`, table rows/cells) are accepted; `<div />` is still read as an empty element. An allowlist then maps unknown tags to `div`/`span`, drops unsupported attributes, SVG elements, `<style>`/`<link>`/`<meta>` and invalid CSS declarations, and reports each in `warnings`. Scripts, active embeds, event handlers, `javascript:` URLs, unclosed block elements at the end and truncated tags are errors.
 - `write_html` takes `html` (up to 1 MiB) or an absolute `path` to a local `.html`/`.htm`/`.svg` file (up to 8 MiB), so large imports don't pass through the chat. `index` counts all children: a target's own text becomes a leading `Text` layer first, so index 0 inserts before it. `move_nodes` and `duplicate_nodes` follow the same rule.
-- `get_styles` reports authored values. Width/height in basic info are CSS declarations, not measured geometry.
+- `get_styles` reports authored values. Width/height in basic info are CSS declarations, not measured geometry; use `get_bounds` for measured boxes and computed styles.
+- `screenshot` and `get_bounds` render the live in-memory document (not the saved file) in a headless Chromium-based browser, launched per call with a throwaway profile and driven over the DevTools protocol. The page holds just the node's artboard, positioned at 0,0 with the editor's frame CSS and the file's tokens; the viewport is the artboard's px size (1440x900 otherwise). The browser is `CARDBOARD_BROWSER` if set, else Chrome, Chromium, Edge or Brave from standard install locations and `PATH`; without one, both tools fail with an actionable error. Screenshots come back as MCP image content (PNG; JPEG above ~3.5 MB), capped at 4096 px per edge and 4 MP, and can also be written to an absolute `path`. A call takes about a second. Neither tool runs inside `batch`.
 - `get_jsx` supports only `inline-styles`. `get_tokens` can return JSON, CSS, or a Tailwind theme block; this does not imply Tailwind JSX generation.
 - `set_text_content` edits leaf text; it rejects nodes with children. Token renames rewrite exact `var(--name)` references, not every possible CSS fallback expression.
 - `finish_working_on_nodes` acknowledges completion; presence markers are not implemented.
@@ -108,4 +110,4 @@ Node ids may be given bare: `581` and `"581"` mean `node-581` (and `pageId: 2` m
 
 ## Parity roadmap
 
-Current tools cover the document core. Add screenshots, browser-computed styles and bounds, font discovery, raster export, and additional manipulation modes after the CEF integration is running. Do not advertise unsupported tools with fabricated responses.
+Current tools cover the document core plus screenshots and measured bounds. Font discovery and additional manipulation modes are still to come. Do not advertise unsupported tools with fabricated responses.

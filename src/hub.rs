@@ -26,6 +26,11 @@ impl Hub {
     }
     /// Run a tool and wake every subscriber if anything changed.
     pub fn call(&self, name: &str, args: &Value) -> Result<Value> {
+        // Rendering takes a browser launch; snapshot the document and render without the lock.
+        if crate::render::TOOLS.contains(&name) {
+            let job = crate::render::prepare(&self.lock(), name, args)?;
+            return job.run();
+        }
         let (result, generation) = {
             let mut store = self.lock();
             let result = tools::call(&mut store, name, args);
