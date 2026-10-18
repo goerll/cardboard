@@ -798,8 +798,9 @@ impl Store {
         self.generation += 1;
         Ok(())
     }
-    /// The library listing, most recent first.
-    pub fn list(&self, archived: bool) -> Vec<Value> {
+    /// The library listing, most recent first. `previews` adds each artboard's HTML (the dashboard
+    /// thumbnails); agents rarely need it and it dominates the response size.
+    pub fn list(&self, archived: bool, previews: bool) -> Vec<Value> {
         const BUDGET: usize = 200 * 1024;
         let mut rows: Vec<(u64, Value)> = self
             .scan(archived)
@@ -829,15 +830,18 @@ impl Store {
                             .iter()
                             .zip(artboard_frames(p))
                             .map(|(n, (x, y, w, h))| {
-                                let html = crate::html::node_html(n, false);
-                                let html = if html.len() <= budget {
-                                    budget -= html.len();
-                                    html
-                                } else {
-                                    budget = 0;
-                                    String::new()
-                                };
-                                json!({"id":n.id,"name":n.name,"x":x,"y":y,"w":w,"h":h,"html":html})
+                                let mut row = json!({"id":n.id,"name":n.name,"x":x,"y":y,"w":w,"h":h});
+                                if previews {
+                                    let html = crate::html::node_html(n, false);
+                                    row["html"] = json!(if html.len() <= budget {
+                                        budget -= html.len();
+                                        html
+                                    } else {
+                                        budget = 0;
+                                        String::new()
+                                    });
+                                }
+                                row
                             })
                             .collect::<Vec<_>>()
                     })

@@ -303,7 +303,7 @@ function NodeInspector({ doc, nodes, parentOf }: { doc: CardboardDocument; nodes
             type="button"
             className="btn"
             onClick={async () => {
-              const r = await call<{ jsx: string }>('get_jsx', { fileId: doc.id, nodeId: node.id });
+              const r = await call<{ jsx: string }>('get_jsx', { fileId: doc.id, nodeId: node.id, maxChars: 0 });
               if (r) {
                 await navigator.clipboard.writeText(r.jsx);
                 toast('JSX copied');

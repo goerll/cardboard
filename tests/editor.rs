@@ -858,3 +858,278 @@ fn misnested_html_is_repaired_the_way_browsers_do() {
         "{html}"
     );
 }
+
+fn card_page(s: &mut Store) -> (String, Vec<String>) {
+    let frame = artboard(s);
+    let ids = insert(
+        s,
+        &frame,
+        r#"<div layer-name="Card" style="background-color:#000;padding:8px"><button layer-name="Buy button" style="color:var(--color-accent);background-color:#000">Buy now</button><p style="color:#555">Free shipping</p></div>"#,
+    );
+    (frame, ids)
+}
+fn found(s: &mut Store, args: Value) -> Vec<String> {
+    edit(s, "find_nodes", args)["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn find_nodes_filters_by_text_name_tag_and_styles_within_a_scope() {
+    let mut s = Store::memory();
+    let (frame, ids) = card_page(&mut s);
+    let card = &ids[0];
+    let children = s
+        .file(&fid(&s))
+        .unwrap()
+        .node(card)
+        .unwrap()
+        .children
+        .clone();
+    let (button, para) = (&children[0].id, &children[1].id);
+    assert_eq!(found(&mut s, json!({"text":"buy NOW"})), [button.as_str()]);
+    assert_eq!(found(&mut s, json!({"name":"button"})), [button.as_str()]);
+    assert_eq!(found(&mut s, json!({"tag":"P"})), [para.as_str()]);
+    assert_eq!(
+        found(&mut s, json!({"styles":{"backgroundColor":"#000"}})),
+        [card.clone(), button.clone()]
+    );
+    assert_eq!(
+        found(
+            &mut s,
+            json!({"styles":{"*":{"contains":"var(--color-accent)"}}})
+        ),
+        [button.as_str()]
+    );
+    assert_eq!(
+        found(&mut s, json!({"styles":{"padding":true,"color":false}})),
+        [card.as_str()]
+    );
+    // All filters must match, and a nodeId scope includes the node itself.
+    assert!(
+        found(
+            &mut s,
+            json!({"tag":"p","styles":{"background-color":"#000"}})
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        found(&mut s, json!({"nodeId":button,"styles":{"*":true}})),
+        [button.as_str()]
+    );
+    assert_eq!(
+        found(&mut s, json!({"pageId":"page-1","tag":"div"})),
+        [frame, card.clone()]
+    );
+    let limited = edit(&mut s, "find_nodes", json!({"styles":{"*":true},"limit":1}));
+    assert_eq!(limited["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        (limited["total"].as_u64(), limited["truncated"].as_bool()),
+        (Some(4), Some(true))
+    );
+    assert_eq!(limited["nodes"][0]["styles"]["width"], "1440px");
+    assert!(tools::call(&mut s, "find_nodes", &json!({"pageId":"page-99"})).is_err());
+}
+
+#[test]
+fn bulk_edits_by_query_are_one_undo_step_and_report_counts() {
+    let mut s = Store::memory();
+    let (_, ids) = card_page(&mut s);
+    let revision = s.file(&fid(&s)).unwrap().revision;
+    let result = edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"query":{"styles":{"background-color":"#000"}},"styles":{"backgroundColor":"#111"}}]}),
+    );
+    assert_eq!(
+        (result["matched"].as_u64(), result["changed"].as_u64()),
+        (Some(2), Some(2))
+    );
+    assert_eq!(result["revision"].as_u64(), Some(revision + 1));
+    assert_eq!(
+        found(&mut s, json!({"styles":{"background-color":"#111"}})).len(),
+        2
+    );
+    let again = edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"query":{"tag":"div","nodeId":ids[0]},"styles":{"background-color":"#111"}}]}),
+    );
+    assert_eq!(
+        (again["matched"].as_u64(), again["changed"].as_u64()),
+        (Some(1), Some(0))
+    );
+    edit(&mut s, "undo", json!({}));
+    assert_eq!(
+        found(&mut s, json!({"styles":{"background-color":"#000"}})).len(),
+        2
+    );
+
+    let attrs = edit(
+        &mut s,
+        "set_attributes",
+        json!({"updates":[{"query":{"tag":"button"},"attributes":{"type":"button"}}]}),
+    );
+    assert_eq!(attrs["changed"].as_u64(), Some(1));
+    let deleted = edit(&mut s, "delete_nodes", json!({"query":{"text":"shipping"}}));
+    assert_eq!(deleted["count"].as_u64(), Some(1));
+    assert!(found(&mut s, json!({"tag":"p"})).is_empty());
+    // A query without filters would match the whole file.
+    assert!(
+        tools::call(
+            &mut s,
+            "delete_nodes",
+            &json!({"query":{"pageId":"page-1"}})
+        )
+        .is_err()
+    );
+    assert!(tools::call(&mut s, "delete_nodes", &json!({})).is_err());
+}
+
+#[test]
+fn bare_numeric_ids_are_accepted() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let number = frame.trim_start_matches("node-").to_owned();
+    assert_eq!(
+        edit(&mut s, "get_node_info", json!({"nodeId":number}))["id"],
+        frame
+    );
+    let n: u64 = number.parse().unwrap();
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[n],"styles":{"color":"red"}}]}),
+    );
+    edit(
+        &mut s,
+        "write_html",
+        json!({"targetNodeId":number,"mode":"insert-children","html":"<p>Hi</p>"}),
+    );
+    assert_eq!(found(&mut s, json!({"nodeId":number,"tag":"p"})).len(), 1);
+    edit(&mut s, "set_active_page", json!({"pageId":"1"}));
+    // Attribute and style payloads are not ids.
+    edit(
+        &mut s,
+        "set_attributes",
+        json!({"updates":[{"nodeId":number,"attributes":{"id":"42"}}]}),
+    );
+    let doc = s.file(&fid(&s)).unwrap();
+    assert_eq!(doc.node(&frame).unwrap().attributes["id"], "42");
+    assert_eq!(doc.node(&frame).unwrap().styles["color"], "red");
+}
+
+#[test]
+fn batch_runs_reads_against_its_own_edits() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let result = edit(
+        &mut s,
+        "batch",
+        json!({"operations":[
+            {"tool":"update_styles","args":{"updates":[{"nodeIds":[frame],"styles":{"color":"red"}}]}},
+            {"tool":"get_styles","args":{"nodeIds":[frame]}},
+            {"tool":"find_nodes","args":{"styles":{"color":"red"}}}
+        ]}),
+    );
+    assert_eq!(result["results"][1]["styles"][&frame]["color"], "red");
+    assert_eq!(result["results"][2]["total"].as_u64(), Some(1));
+    let err = tools::call(&mut s, "batch", &json!({"operations":[{"tool":"undo"}]})).unwrap_err();
+    assert!(err.contains("undo cannot run inside batch") && err.contains("find_nodes"));
+}
+
+#[test]
+fn stale_revision_error_names_the_current_revision() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s);
+    let err = tools::call(
+        &mut s,
+        "update_styles",
+        &json!({"expectedRevision":0,"updates":[{"nodeIds":[frame],"styles":{"color":"red"}}]}),
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("revision 1") && err.contains("retry with expectedRevision 1"),
+        "{err}"
+    );
+}
+
+#[test]
+fn reads_are_scoped_and_bounded() {
+    let mut s = Store::memory();
+    let (frame, ids) = card_page(&mut s);
+    let page = edit(&mut s, "create_page", json!({"name":"Other"}))["pageId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let other = edit(
+        &mut s,
+        "create_artboard",
+        json!({"name":"Phone","pageId":page,"styles":{"width":"390px","height":"844px"}}),
+    )["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let card = edit(&mut s, "export_html", json!({"nodeId":ids[0]}))["html"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(card.contains("Buy now") && !card.contains("width:1440px"));
+    let paged = edit(&mut s, "export_html", json!({"pageId":page}))["html"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(paged.contains("width:390px") && !paged.contains("Buy now"));
+    let clipped = edit(&mut s, "export_html", json!({"maxChars":300}));
+    assert_eq!(clipped["truncated"], true);
+    assert!(clipped["html"].as_str().unwrap().contains("[truncated: "));
+    assert!(clipped["totalChars"].as_u64().unwrap() > 300);
+    assert!(
+        edit(&mut s, "export_html", json!({"maxChars":0}))
+            .get("truncated")
+            .is_none()
+    );
+
+    let node = edit(&mut s, "get_document", json!({"nodeId":frame,"depth":0}))["node"].clone();
+    assert_eq!(node["children"], json!([]));
+    assert_eq!(node["omittedChildren"], 1);
+    let p = edit(&mut s, "get_document", json!({"pageId":page}))["page"].clone();
+    assert_eq!(p["artboards"][0]["id"], other);
+    let whole = edit(&mut s, "get_document", json!({"depth":1}));
+    assert_eq!(
+        whole["document"]["pages"][0]["artboards"][0]["children"][0]["omittedChildren"],
+        2
+    );
+    let err = tools::call(&mut s, "get_document", &json!({"maxChars":100})).unwrap_err();
+    assert!(err.contains("Narrow it with pageId"), "{err}");
+
+    let tree = edit(&mut s, "get_tree_summary", json!({"pageId":page}))["tree"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(tree.contains(&other) && !tree.contains(&frame));
+    assert!(
+        edit(&mut s, "get_tree_summary", json!({}))["tree"]
+            .as_str()
+            .unwrap()
+            .contains(&frame)
+    );
+}
+
+#[test]
+fn list_files_omits_previews_unless_asked() {
+    let dir = temp_dir("list-previews");
+    let mut s = Store::library(&dir, None).unwrap();
+    edit(&mut s, "create_file", json!({"name":"Shop"}));
+    card_page(&mut s);
+    s.flush().unwrap();
+    let plain = edit(&mut s, "list_files", json!({}))["files"][0]["artboards"][0].clone();
+    assert!(plain.get("html").is_none() && plain["name"] == "Desktop");
+    let rich =
+        edit(&mut s, "list_files", json!({"previews":true}))["files"][0]["artboards"][0].clone();
+    assert!(rich["html"].as_str().unwrap().contains("Buy now"));
+}

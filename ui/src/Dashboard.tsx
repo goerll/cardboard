@@ -19,7 +19,7 @@ export function Dashboard() {
   useEffect(() => {
     if (!connected || view === 'settings') return;
     let live = true;
-    request<{ files: LibraryFile[] }>('list_files', { archived: view === 'archive' })
+    request<{ files: LibraryFile[] }>('list_files', { archived: view === 'archive', previews: true })
       .then((r) => live && setFiles(r.files))
       .catch(() => live && setFiles([]));
     return () => {

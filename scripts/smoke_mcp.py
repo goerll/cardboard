@@ -71,7 +71,7 @@ def main():
         client = Client(binary, document)
         try:
             tools = client.request("tools/list", {})["tools"]
-            assert len(tools) == 46, len(tools)
+            assert len(tools) == 47, len(tools)
             guide = client.value("get_guide", {"topic": "cardboard-design"})
             assert guide["guide"]
             file_id = client.value("list_resources", {})["resources"][0]["id"]
@@ -87,6 +87,10 @@ def main():
                 "fileId": file_id,
                 "updates": [{"nodeIds": [child], "styles": {"backgroundColor": "#f4f4f4"}}],
             })
+            hits = client.value("find_nodes", {
+                "fileId": file_id, "styles": {"background-color": "#f4f4f4"},
+            })["nodes"]
+            assert [h["id"] for h in hits] == [child], hits
             exported = client.value("export_html", {"fileId": file_id})["html"]
             assert "Hello &amp; Cardboard" in exported and "background-color:#f4f4f4" in exported
             assert "data-cardboard-id" not in exported
@@ -104,7 +108,7 @@ def main():
             assert reopened.value("export_html", {"fileId": file_id})["html"] == exported
         finally:
             reopened.close()
-    print("MCP smoke passed: 46 tools, editing, recoverable errors, export, restart persistence")
+    print("MCP smoke passed: 47 tools, editing, search, recoverable errors, export, restart persistence")
 
 
 if __name__ == "__main__":

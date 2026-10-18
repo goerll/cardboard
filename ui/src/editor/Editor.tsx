@@ -551,7 +551,7 @@ function ExportDialog({ doc }: { doc: CardboardDocument }) {
   const open = useEditor((s) => s.exportOpen);
   const [html, setHtml] = useState('');
   useEffect(() => {
-    if (open) request<{ html: string }>('export_html', { fileId: doc.id }).then((r) => setHtml(r.html)).catch((e) => setHtml(String(e)));
+    if (open) request<{ html: string }>('export_html', { fileId: doc.id, maxChars: 0 }).then((r) => setHtml(r.html)).catch((e) => setHtml(String(e)));
   }, [open, doc.id, doc.revision]);
   if (!open) return null;
   const download = () => {

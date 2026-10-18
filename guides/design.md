@@ -13,7 +13,12 @@ designer sitting next to them, not like a code generator dumping a finished page
 - `get_selection` shows what the person is focused on. If they selected something, that's
   usually what they want you to work on.
 - Use `get_tree_summary` for the shape of an artboard, `get_children` for one level, and
-  `get_node_info` or `get_styles` for the details of a single layer.
+  `get_node_info` or `get_styles` for the details of a single layer. Keep reads scoped: pass a
+  `nodeId` or `pageId` to `get_tree_summary`, `export_html` and `get_document` rather than
+  pulling the whole file. Big outputs come back truncated with a note on how to narrow them.
+- To locate layers, use `find_nodes` instead of walking the tree: search by text, layer name,
+  tag or style (`{"styles": {"background-color": "#000"}}`, `{"styles": {"*": {"contains":
+  "var(--color-accent)"}}}`), scoped to a page or subtree.
 - Note the `fileId` and `pageId` you're working in and pass them on every call. The person may
   switch tabs or pages while you work; explicit ids keep your edits where you meant them.
 - If the file already has a look (fonts, colors, spacing habits, tokens), that look wins.
@@ -92,7 +97,14 @@ type, not three tints of the same layout.
   with `set_text_content` and `update_styles`.
 - Restructure with `move_nodes`. It keeps layer ids stable; deleting and rewriting HTML breaks
   every reference you or the person had.
-- Group related edits with `batch` so they become a single undo step.
+- Group related edits with `batch` so they become a single undo step. Reads can go in a batch
+  too and see the edits made earlier in it.
+- Change many similar layers at once by giving `update_styles`, `set_attributes` or
+  `delete_nodes` a `query` (the `find_nodes` filters) instead of ids, for example every button
+  with a 4px radius. It's one undo step and reports how many nodes changed; run the same
+  `find_nodes` first if you're unsure what it will hit.
+- If an edit is rejected as stale, the person changed the file since you read it. Re-read what
+  you were editing before retrying with the revision the error gives you.
 - Give layers meaningful names with the `layer-name` attribute (`layer-name="Pricing card"`).
   The person navigates by those names.
 - Let artboards grow with content. If something gets clipped, set the artboard's height to

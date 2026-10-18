@@ -222,6 +222,268 @@ fn opened(store: &Store, id: &str) -> Result<Value> {
     Ok(info)
 }
 
+/// Agents often drop the prefix (`581` for `node-581`). Node and page ids share one counter, so
+/// the number alone is unambiguous. Style, attribute and HTML payloads are left untouched.
+fn normalize_ids(v: &mut Value) {
+    fn fix(v: &mut Value, prefix: &str) {
+        let n = match v {
+            Value::Number(n) => n.as_u64(),
+            Value::String(s) => s.trim().parse::<u64>().ok(),
+            Value::Array(items) => {
+                items.iter_mut().for_each(|v| fix(v, prefix));
+                None
+            }
+            _ => None,
+        };
+        if let Some(n) = n {
+            *v = json!(format!("{prefix}{n}"));
+        }
+    }
+    match v {
+        Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                match k.as_str() {
+                    "nodeId" | "nodeIds" | "targetNodeId" | "parentId" => fix(v, "node-"),
+                    "pageId" | "pageIds" => fix(v, "page-"),
+                    "id" => fix(v, "node-"),
+                    "styles" | "attributes" | "tokens" | "html" => {}
+                    _ => normalize_ids(v),
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(normalize_ids),
+        _ => {}
+    }
+}
+
+/// Default output budget for text-heavy reads, sized to fit an agent's tool-result window.
+const MAX_CHARS: usize = 50_000;
+fn max_chars(args: &Value) -> usize {
+    args.get("maxChars")
+        .and_then(Value::as_u64)
+        .map_or(MAX_CHARS, |n| if n == 0 { usize::MAX } else { n as usize })
+}
+/// Cut `value[key]` to the caller's budget, preferring a line break, and say how to narrow.
+fn limited(mut value: Value, key: &str, args: &Value, hint: &str) -> Value {
+    let max = max_chars(args);
+    let text = value[key].as_str().unwrap_or_default();
+    if text.len() <= max {
+        return value;
+    }
+    let total = text.len();
+    let mut cut = max;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    if let Some(line) = text[..cut].rfind('\n') {
+        cut = line + 1;
+    }
+    let clipped = format!(
+        "{}\n[truncated: {cut} of {total} chars shown; {hint}, or pass maxChars: 0 for all of it]",
+        &text[..cut]
+    );
+    value[key] = json!(clipped);
+    value["truncated"] = json!(true);
+    value["totalChars"] = json!(total);
+    value
+}
+/// Serialize a node, replacing children below `depth` with a count.
+fn pruned(n: &Node, depth: Option<u64>) -> Value {
+    let mut v = json!(n);
+    fn prune(v: &mut Value, depth: u64) {
+        let Some(children) = v.get_mut("children").and_then(Value::as_array_mut) else {
+            return;
+        };
+        if depth == 0 {
+            let count = children.len();
+            children.clear();
+            if count > 0 {
+                v["omittedChildren"] = json!(count);
+            }
+        } else {
+            children.iter_mut().for_each(|c| prune(c, depth - 1));
+        }
+    }
+    if let Some(depth) = depth {
+        prune(&mut v, depth);
+    }
+    v
+}
+
+/// Node search shared by `find_nodes` and the `query` form of bulk edits.
+struct Query {
+    page: Option<String>,
+    node: Option<String>,
+    text: Option<String>,
+    name: Option<String>,
+    tag: Option<String>,
+    styles: Vec<(String, StyleTest)>,
+}
+enum StyleTest {
+    Present(bool),
+    Equals(String),
+    Contains(String),
+}
+struct Hit<'a> {
+    page: &'a str,
+    artboard: &'a str,
+    node: &'a Node,
+}
+fn fold(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+impl Query {
+    fn parse(v: &Value) -> Result<Self> {
+        let raw = |key: &str| -> Result<Option<String>> {
+            v.get(key)
+                .map(|s| {
+                    s.as_str()
+                        .map(String::from)
+                        .ok_or(format!("{key} must be a string"))
+                })
+                .transpose()
+        };
+        let text = |key: &str| Ok::<_, String>(raw(key)?.map(|s| fold(&s)));
+        let mut styles = vec![];
+        if let Some(map) = v.get("styles") {
+            for (k, test) in map.as_object().ok_or("styles must be an object")? {
+                let test = match test {
+                    Value::Bool(b) => StyleTest::Present(*b),
+                    Value::String(_) | Value::Number(_) => StyleTest::Equals(fold(&css_value(test)?)),
+                    Value::Object(o) => StyleTest::Contains(fold(
+                        o.get("contains").and_then(Value::as_str).ok_or(
+                            "A style test is a value, true/false (present/absent) or {\"contains\": text}",
+                        )?,
+                    )),
+                    _ => return Err("A style test is a value, true/false (present/absent) or {\"contains\": text}".into()),
+                };
+                let k = if k == "*" {
+                    k.clone()
+                } else {
+                    html::css_name(k)
+                };
+                styles.push((k, test));
+            }
+        }
+        Ok(Self {
+            page: raw("pageId")?,
+            node: raw("nodeId")?,
+            text: text("text")?,
+            name: text("name")?,
+            tag: text("tag")?,
+            styles,
+        })
+    }
+    fn has_filter(&self) -> bool {
+        self.text.is_some() || self.name.is_some() || self.tag.is_some() || !self.styles.is_empty()
+    }
+    fn matches(&self, n: &Node) -> bool {
+        let style = |k: &str, test: &StyleTest| {
+            let values: Vec<&String> = if k == "*" {
+                n.styles.values().collect()
+            } else {
+                n.styles.get(k).into_iter().collect()
+            };
+            match test {
+                StyleTest::Present(b) => values.is_empty() != *b,
+                StyleTest::Equals(want) => values.iter().any(|v| fold(v) == *want),
+                StyleTest::Contains(want) => values.iter().any(|v| fold(v).contains(want)),
+            }
+        };
+        self.text.as_ref().is_none_or(|t| fold(&n.text).contains(t))
+            && self.name.as_ref().is_none_or(|t| fold(&n.name).contains(t))
+            && self
+                .tag
+                .as_ref()
+                .is_none_or(|t| n.tag.eq_ignore_ascii_case(t))
+            && self.styles.iter().all(|(k, test)| style(k, test))
+    }
+    /// Matching nodes in document order, scoped to a page or subtree when given.
+    fn run<'a>(&self, doc: &'a Document) -> Result<Vec<Hit<'a>>> {
+        fn walk<'a>(
+            q: &Query,
+            page: &'a str,
+            artboard: &'a str,
+            n: &'a Node,
+            out: &mut Vec<Hit<'a>>,
+        ) {
+            if q.matches(n) {
+                out.push(Hit {
+                    page,
+                    artboard,
+                    node: n,
+                });
+            }
+            for c in &n.children {
+                walk(q, page, artboard, c, out);
+            }
+        }
+        if let Some(page) = &self.page
+            && !doc.pages.iter().any(|p| &p.id == page)
+        {
+            return Err(format!("Page {page} does not exist"));
+        }
+        if let Some(id) = &self.node {
+            doc.node(id)?;
+        }
+        let mut out = vec![];
+        for p in doc
+            .pages
+            .iter()
+            .filter(|p| self.page.as_ref().is_none_or(|id| &p.id == id))
+        {
+            for a in &p.artboards {
+                match &self.node {
+                    Some(id) => {
+                        if let Some(n) = a.find(id) {
+                            walk(self, &p.id, &a.id, n, &mut out);
+                        }
+                    }
+                    None => walk(self, &p.id, &a.id, a, &mut out),
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+/// The ids an edit item targets: its explicit `key` ids, or everything its `query` matches.
+fn targets(doc: &Document, item: &Value, key: &str) -> Result<Vec<String>> {
+    match item.get("query") {
+        Some(q) => {
+            let q = Query::parse(q)?;
+            if !q.has_filter() && q.node.is_none() {
+                return Err("query needs text, name, tag or styles (or a nodeId subtree) so it cannot match the whole file".into());
+            }
+            Ok(q.run(doc)?.iter().map(|h| h.node.id.clone()).collect())
+        }
+        None if key == "nodeId" => Ok(vec![
+            string(item, key)
+                .map_err(|_| "Give nodeId or query".to_string())?
+                .into(),
+        ]),
+        None => string_ids(item, key).map_err(|_| format!("Give {key} or query")),
+    }
+}
+
+/// Tools that only read one document; they may also run inside `batch`, seeing earlier edits.
+const READS: &[&str] = &[
+    "get_document",
+    "get_basic_info",
+    "get_selection",
+    "get_node_info",
+    "get_children",
+    "get_tree_summary",
+    "get_styles",
+    "get_tokens",
+    "get_jsx",
+    "export_html",
+    "find_nodes",
+    "finish_working_on_nodes",
+];
+
 /// Tools that change one document and therefore can run inside `batch`.
 const MUTATIONS: &[&str] = &[
     "create_page",
@@ -247,6 +509,9 @@ const MUTATIONS: &[&str] = &[
 ];
 
 pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
+    let mut args = args.clone();
+    normalize_ids(&mut args);
+    let args = &args;
     match name {
         "get_guide" => {
             return match string(args, "topic")? {
@@ -259,7 +524,11 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
                 json!({"resources":store.tabs.iter().filter_map(|id| store.files.get(id)).map(|f| json!({"id":f.doc.id,"name":f.doc.name,"type":"file","open":true,"active":store.active_file.as_ref()==Some(&f.doc.id),"path":f.path.as_ref().map(|p| p.to_string_lossy())})).collect::<Vec<_>>()}),
             );
         }
-        "list_files" => return Ok(json!({"files":store.list(bool_arg(args, "archived"))})),
+        "list_files" => {
+            return Ok(
+                json!({"files":store.list(bool_arg(args, "archived"), bool_arg(args, "previews"))}),
+            );
+        }
         "create_file" => {
             let id = store.create(args.get("name").and_then(Value::as_str))?;
             return Ok(json!({"fileId":id,"path":store.path_of(&id).map(|p| p.to_string_lossy())}));
@@ -323,70 +592,18 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
         _ => {}
     }
     let id = store.file_id(args)?;
+    let current = store.file(&id)?.revision;
     if let Some(expected) = args.get("expectedRevision")
-        && expected.as_u64() != Some(store.file(&id)?.revision)
+        && expected.as_u64() != Some(current)
     {
-        return Err("Document revision changed; read the file again before editing".into());
+        return Err(format!(
+            "Stale edit rejected: expectedRevision is {expected} but the file is at revision {current}, \
+             so it changed since you read it (the person or another agent edited it). Re-read the nodes \
+             you are changing, then retry with expectedRevision {current}, or omit expectedRevision"
+        ));
     }
     let doc = store.file(&id)?;
-    let read = match name {
-        "get_document" => Some(json!({"document":doc})),
-        "get_basic_info" => Some(doc.info()),
-        "get_selection" => Some(
-            json!({"nodes":doc.selection.iter().filter_map(|id| doc.node(id).ok().map(node_info)).collect::<Vec<_>>()}),
-        ),
-        "get_node_info" => Some(node_info(doc.node(string(args, "nodeId")?)?)),
-        "get_children" => Some(
-            json!({"children":doc.node(string(args,"nodeId")?)?.children.iter().map(node_info).collect::<Vec<_>>() }),
-        ),
-        "get_tree_summary" => {
-            let mut text = String::new();
-            tree(
-                doc.node(string(args, "nodeId")?)?,
-                args.get("depth")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(3)
-                    .min(10) as usize,
-                0,
-                &mut text,
-            );
-            Some(json!({"tree":text}))
-        }
-        "get_styles" => {
-            let mut map = serde_json::Map::new();
-            for id in array(args, "nodeIds")? {
-                let id = id.as_str().ok_or("nodeIds must contain strings")?;
-                map.insert(id.into(), json!(doc.node(id)?.styles));
-            }
-            Some(json!({"styles":map,"kind":"authored"}))
-        }
-        "get_tokens" => {
-            let format = args.get("format").and_then(Value::as_str).unwrap_or("json");
-            Some(match format {
-                "json" => {
-                    json!({"tokens":doc.tokens.iter().map(|(name,value)| json!({"name":name,"value":value})).collect::<Vec<_>>() })
-                }
-                "css" | "tailwind" => {
-                    json!({"css":format!("{} {{\n{}\n}}",if format=="css" {":root"} else {"@theme"},doc.tokens.iter().map(|(k,v)|format!("  {k}: {v};")).collect::<Vec<_>>().join("\n"))})
-                }
-                _ => return Err("format must be json, css or tailwind".into()),
-            })
-        }
-        "get_jsx" => {
-            if args
-                .get("format")
-                .and_then(Value::as_str)
-                .is_some_and(|f| f != "inline-styles")
-            {
-                return Err("This version exports inline-styles JSX; Tailwind conversion is not implemented yet".into());
-            }
-            Some(json!({"jsx":jsx(doc.node(string(args,"nodeId")?)?),"format":"inline-styles"}))
-        }
-        "export_html" => Some(json!({"html":html::document_html(doc,false)})),
-        "finish_working_on_nodes" => Some(json!({"finished":true})),
-        _ => None,
-    };
-    if let Some(mut value) = read {
+    if let Some(mut value) = read(doc, name, args)? {
         value["fileId"] = json!(id);
         value["revision"] = json!(doc.revision);
         return Ok(value);
@@ -406,14 +623,21 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
             let mut results = vec![];
             for op in array(args, "operations")? {
                 let tool = string(op, "tool")?;
-                if !MUTATIONS.contains(&tool) {
-                    return Err(format!("{tool} cannot run inside batch"));
-                }
                 let op_args = op.get("args").cloned().unwrap_or(json!({}));
                 if op_args.get("fileId").is_some_and(|f| f != &json!(id)) {
                     return Err("Batch operations must target the batch's file".into());
                 }
-                results.push(mutate(doc, tool, &op_args).map_err(|e| format!("{tool}: {e}"))?);
+                let result = if READS.contains(&tool) {
+                    read(doc, tool, &op_args).map(Option::unwrap)
+                } else if MUTATIONS.contains(&tool) {
+                    mutate(doc, tool, &op_args)
+                } else {
+                    return Err(format!(
+                        "{tool} cannot run inside batch: batch takes one file's edits and reads \
+                         (get_*, find_nodes, export_html). Call file, undo and redo tools on their own"
+                    ));
+                };
+                results.push(result.map_err(|e| format!("{tool}: {e}"))?);
             }
             Ok(json!({"results":results}))
         })?,
@@ -423,6 +647,160 @@ pub fn call(store: &mut Store, name: &str, args: &Value) -> Result<Value> {
     result["fileId"] = json!(id);
     result["revision"] = json!(store.file(&id)?.revision);
     Ok(result)
+}
+
+/// Read tools, or `None` when `name` is not one.
+fn read(doc: &Document, name: &str, args: &Value) -> Result<Option<Value>> {
+    let depth = args.get("depth").and_then(Value::as_u64);
+    let page = |id: &str| {
+        doc.pages
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| format!("Page {id} does not exist"))
+    };
+    Ok(Some(match name {
+        "get_document" => {
+            let value = if let Ok(id) = string(args, "nodeId") {
+                json!({"node":pruned(doc.node(id)?, depth)})
+            } else if let Ok(id) = string(args, "pageId") {
+                let p = page(id)?;
+                json!({"page":{"id":p.id,"name":p.name,"background":p.background,
+                    "artboards":p.artboards.iter().map(|n| pruned(n, depth)).collect::<Vec<_>>()}})
+            } else if depth.is_some() {
+                let mut v = json!(doc);
+                for (i, p) in doc.pages.iter().enumerate() {
+                    v["pages"][i]["artboards"] = json!(
+                        p.artboards
+                            .iter()
+                            .map(|n| pruned(n, depth))
+                            .collect::<Vec<_>>()
+                    );
+                }
+                json!({"document":v})
+            } else {
+                json!({"document":doc})
+            };
+            let size = value.to_string().len();
+            let max = max_chars(args);
+            if size > max {
+                return Err(format!(
+                    "get_document would return {size} chars, over the {max} limit. Narrow it with pageId, \
+                     nodeId or depth; locate nodes with get_tree_summary or find_nodes; or pass maxChars: 0"
+                ));
+            }
+            value
+        }
+        "get_basic_info" => doc.info(),
+        "get_selection" => {
+            json!({"nodes":doc.selection.iter().filter_map(|id| doc.node(id).ok().map(node_info)).collect::<Vec<_>>()})
+        }
+        "get_node_info" => node_info(doc.node(string(args, "nodeId")?)?),
+        "get_children" => {
+            json!({"children":doc.node(string(args,"nodeId")?)?.children.iter().map(node_info).collect::<Vec<_>>() })
+        }
+        "get_tree_summary" => {
+            let roots: Vec<&Node> = match (string(args, "nodeId"), string(args, "pageId")) {
+                (Ok(id), _) => vec![doc.node(id)?],
+                (_, Ok(id)) => page(id)?.artboards.iter().collect(),
+                _ => page(&doc.active_page)?.artboards.iter().collect(),
+            };
+            let mut text = String::new();
+            for n in roots {
+                tree(n, depth.unwrap_or(3).min(10) as usize, 0, &mut text);
+            }
+            limited(
+                json!({"tree":text}),
+                "tree",
+                args,
+                "pass a nodeId or a smaller depth",
+            )
+        }
+        "get_styles" => {
+            let mut map = serde_json::Map::new();
+            for id in string_ids(args, "nodeIds")? {
+                map.insert(id.clone(), json!(doc.node(&id)?.styles));
+            }
+            json!({"styles":map,"kind":"authored"})
+        }
+        "get_tokens" => {
+            let format = args.get("format").and_then(Value::as_str).unwrap_or("json");
+            match format {
+                "json" => {
+                    json!({"tokens":doc.tokens.iter().map(|(name,value)| json!({"name":name,"value":value})).collect::<Vec<_>>() })
+                }
+                "css" | "tailwind" => {
+                    json!({"css":format!("{} {{\n{}\n}}",if format=="css" {":root"} else {"@theme"},doc.tokens.iter().map(|(k,v)|format!("  {k}: {v};")).collect::<Vec<_>>().join("\n"))})
+                }
+                _ => return Err("format must be json, css or tailwind".into()),
+            }
+        }
+        "get_jsx" => {
+            if args
+                .get("format")
+                .and_then(Value::as_str)
+                .is_some_and(|f| f != "inline-styles")
+            {
+                return Err("This version exports inline-styles JSX; Tailwind conversion is not implemented yet".into());
+            }
+            limited(
+                json!({"jsx":jsx(doc.node(string(args,"nodeId")?)?),"format":"inline-styles"}),
+                "jsx",
+                args,
+                "export a smaller nodeId",
+            )
+        }
+        "export_html" => {
+            let html = match (string(args, "nodeId"), string(args, "pageId")) {
+                (Ok(id), _) => html::nodes_html(doc, vec![doc.node(id)?], false),
+                (_, Ok(id)) => html::nodes_html(doc, page(id)?.artboards.iter().collect(), false),
+                _ => html::document_html(doc, false),
+            };
+            limited(
+                json!({"html":html}),
+                "html",
+                args,
+                "export one artboard or node with nodeId",
+            )
+        }
+        "find_nodes" => {
+            let hits = Query::parse(args)?.run(doc)?;
+            let limit = args
+                .get("limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(50)
+                .clamp(1, 500) as usize;
+            let queried: Vec<&str> = args
+                .get("styles")
+                .and_then(Value::as_object)
+                .map(|m| m.keys().map(String::as_str).collect())
+                .unwrap_or_default();
+            let nodes = hits
+                .iter()
+                .take(limit)
+                .map(|h| {
+                    let n = h.node;
+                    let mut row = json!({"id":n.id,"name":n.name,"tag":n.tag,"pageId":h.page,"artboardId":h.artboard});
+                    if !n.text.is_empty() {
+                        let text: String = n.text.chars().take(80).collect();
+                        row["text"] = json!(text);
+                    }
+                    if !queried.is_empty() {
+                        let styles: Styles = n
+                            .styles
+                            .iter()
+                            .filter(|(k, _)| queried.iter().any(|q| *q == "*" || html::css_name(q) == **k))
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        row["styles"] = json!(styles);
+                    }
+                    row
+                })
+                .collect::<Vec<_>>();
+            json!({"nodes":nodes,"total":hits.len(),"truncated":hits.len() > limit})
+        }
+        "finish_working_on_nodes" => json!({"finished":true}),
+        _ => return Ok(None),
+    }))
 }
 
 fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
@@ -597,10 +975,12 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             Ok(result)
         }
         "update_styles" => {
+            let (mut matched, mut changed) = (BTreeSet::new(), BTreeSet::new());
             for update in array(args, "updates")? {
                 let patch = styles(update.get("styles").ok_or("styles is required")?)?;
-                for id in array(update, "nodeIds")? {
-                    let node = doc.node_mut(id.as_str().ok_or("nodeIds must contain strings")?)?;
+                for id in targets(doc, update, "nodeIds")? {
+                    let node = doc.node_mut(&id)?;
+                    let before = node.styles.clone();
                     for (name, value) in &patch {
                         if value.is_empty() {
                             node.styles.remove(name);
@@ -608,9 +988,13 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                             node.styles.insert(name.clone(), value.clone());
                         }
                     }
+                    if node.styles != before {
+                        changed.insert(id.clone());
+                    }
+                    matched.insert(id);
                 }
             }
-            Ok(json!({"updated":true}))
+            Ok(json!({"updated":true,"matched":matched.len(),"changed":changed.len()}))
         }
         "set_text_content" | "rename_nodes" => {
             for update in array(args, "updates")? {
@@ -633,23 +1017,31 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             Ok(json!({"updated":true}))
         }
         "set_attributes" => {
+            let (mut matched, mut changed) = (BTreeSet::new(), BTreeSet::new());
             for update in array(args, "updates")? {
-                let node = doc.node_mut(string(update, "nodeId")?)?;
-                for (k, v) in update
+                let attributes = update
                     .get("attributes")
                     .and_then(Value::as_object)
-                    .ok_or("attributes must be an object")?
-                {
-                    let v = v.as_str().ok_or("Attribute values must be strings")?;
-                    if v.is_empty() {
-                        node.attributes.remove(k);
-                    } else {
-                        html::validate_attribute(k, v)?;
-                        node.attributes.insert(k.clone(), v.into());
+                    .ok_or("attributes must be an object")?;
+                for id in targets(doc, update, "nodeId")? {
+                    let node = doc.node_mut(&id)?;
+                    let before = node.attributes.clone();
+                    for (k, v) in attributes {
+                        let v = v.as_str().ok_or("Attribute values must be strings")?;
+                        if v.is_empty() {
+                            node.attributes.remove(k);
+                        } else {
+                            html::validate_attribute(k, v)?;
+                            node.attributes.insert(k.clone(), v.into());
+                        }
                     }
+                    if node.attributes != before {
+                        changed.insert(id.clone());
+                    }
+                    matched.insert(id);
                 }
             }
-            Ok(json!({"updated":true}))
+            Ok(json!({"updated":true,"matched":matched.len(),"changed":changed.len()}))
         }
         "set_node_state" => {
             for update in array(args, "updates")? {
@@ -689,7 +1081,7 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
             Ok(json!({"updated":true}))
         }
         "delete_nodes" => {
-            let ids = string_ids(args, "nodeIds")?;
+            let ids = targets(doc, args, "nodeIds")?;
             for id in &ids {
                 doc.node(id)?;
             }
@@ -712,7 +1104,7 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                 .cloned()
                 .collect();
             doc.selection = valid;
-            Ok(json!({"deleted":ids}))
+            Ok(json!({"count":ids.len(),"deleted":ids}))
         }
         "duplicate_nodes" => {
             let mut result = vec![];
@@ -866,11 +1258,14 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
     }
 }
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 pub fn definitions() -> Vec<Value> {
     let s = json!({"type":"string"});
     let ids = json!({"type":"array","items":s});
     let obj = json!({"type":"object"});
+    let max = json!({"type":"integer","minimum":0,"description":"Output budget in characters (default 50000); 0 means no limit"});
+    let query_props = json!({"pageId":s,"nodeId":{"type":"string","description":"Search only this node and its descendants"},"text":{"type":"string","description":"Case-insensitive substring of the node's own text"},"name":{"type":"string","description":"Case-insensitive substring of the layer name"},"tag":{"type":"string","description":"Exact tag, such as button or svg"},"styles":{"type":"object","description":"Property (CSS or camelCase, or * for any) to a test: a value for an exact match, true/false for present/absent, or {\"contains\": text}"}});
+    let query = json!({"type":"object","properties":query_props,"additionalProperties":false,"description":"Target every node find_nodes would match, instead of listing ids"});
     let mut tools = vec![];
     let mut add = |name: &str, description: &str, props: Value, required: Vec<&str>, read: bool| {
         let mut props = props.as_object().unwrap().clone();
@@ -941,9 +1336,9 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "get_tree_summary",
-        "Read a compact subtree; cheaper than full code export.",
-        json!({"nodeId":s,"depth":{"type":"integer","minimum":0,"maximum":10}}),
-        vec!["nodeId", "fileId"],
+        "Read a compact outline (tag, name, id per line) of one node, or of every artboard on a page (default: the active page); cheaper than full code export.",
+        json!({"nodeId":s,"pageId":s,"depth":{"type":"integer","minimum":0,"maximum":10},"maxChars":max}),
+        vec!["fileId"],
         true,
     );
     add(
@@ -983,8 +1378,8 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "update_styles",
-        "Apply targeted CSS changes atomically. Accepts CSS names or camelCase names; use var(--token) when a token exists.",
-        json!({"updates":{"type":"array","items":{"type":"object","properties":{"nodeIds":ids,"styles":obj},"required":["nodeIds","styles"],"additionalProperties":false}}}),
+        "Apply targeted CSS changes atomically. Each update targets nodeIds or a query (the same filters as find_nodes) so one call can restyle every match. Accepts CSS names or camelCase names; use var(--token) when a token exists. Reports matched and changed node counts.",
+        json!({"updates":{"type":"array","items":{"type":"object","properties":{"nodeIds":ids,"query":query,"styles":obj},"required":["styles"],"additionalProperties":false}}}),
         vec!["updates", "fileId"],
         false,
     );
@@ -1004,9 +1399,9 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "delete_nodes",
-        "Delete a set of nodes. Deleting an ancestor also removes its descendants.",
-        json!({"nodeIds":ids}),
-        vec!["nodeIds", "fileId"],
+        "Delete nodeIds, or every node a query matches. Deleting an ancestor also removes its descendants.",
+        json!({"nodeIds":ids,"query":query}),
+        vec!["fileId"],
         false,
     );
     add(
@@ -1046,15 +1441,15 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "get_jsx",
-        "Export one subtree as JSX with inline styles. Preserve values when adapting it to the project's framework.",
-        json!({"nodeId":s,"format":{"type":"string","enum":["inline-styles"]}}),
+        "Export one subtree as JSX with inline styles. Preserve values when adapting it to the project's framework. Long output is truncated with a marker.",
+        json!({"nodeId":s,"format":{"type":"string","enum":["inline-styles"]},"maxChars":max}),
         vec!["nodeId", "fileId"],
         true,
     );
     add(
         "export_html",
-        "Export the active page as ordinary HTML/CSS without editor attributes.",
-        json!({}),
+        "Export ordinary HTML/CSS without editor attributes: one artboard or node (nodeId), a page (pageId), or by default the active page. Long output is truncated with a marker.",
+        json!({"nodeId":s,"pageId":s,"maxChars":max}),
         vec!["fileId"],
         true,
     );
@@ -1081,8 +1476,8 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "list_files",
-        "List .cardboard files in the local library, most recent first, with per-artboard preview HTML.",
-        json!({"archived":{"type":"boolean"}}),
+        "List .cardboard files in the local library, most recent first, with their artboards. previews adds per-artboard HTML (large).",
+        json!({"archived":{"type":"boolean"},"previews":{"type":"boolean"}}),
         vec![],
         true,
     );
@@ -1137,8 +1532,8 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "get_document",
-        "Read the complete document model as JSON.",
-        json!({}),
+        "Read the document model as JSON: one node (nodeId), one page (pageId) or the whole file. depth cuts children below that level. Results over maxChars are refused with a hint; prefer get_tree_summary or find_nodes to locate things.",
+        json!({"nodeId":s,"pageId":s,"depth":{"type":"integer","minimum":0},"maxChars":max}),
         vec![],
         true,
     );
@@ -1179,8 +1574,8 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "set_attributes",
-        "Set or remove (\"\") HTML attributes such as src, alt or href.",
-        json!({"updates":{"type":"array","items":{"type":"object","properties":{"nodeId":s,"attributes":obj},"required":["nodeId","attributes"],"additionalProperties":false}}}),
+        "Set or remove (\"\") HTML attributes such as src, alt or href on a nodeId or on every node a query matches.",
+        json!({"updates":{"type":"array","items":{"type":"object","properties":{"nodeId":s,"query":query,"attributes":obj},"required":["attributes"],"additionalProperties":false}}}),
         vec!["updates"],
         false,
     );
@@ -1200,10 +1595,21 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "batch",
-        "Run several editing tools on one file as a single atomic, undoable step.",
+        "Run several editing tools on one file as a single atomic, undoable step. Read tools (get_*, find_nodes, export_html) may be mixed in and see the edits before them.",
         json!({"operations":{"type":"array","items":{"type":"object","properties":{"tool":s,"args":obj},"required":["tool"],"additionalProperties":false}}}),
         vec!["operations"],
         false,
+    );
+    add(
+        "find_nodes",
+        "Search a file, a page (pageId) or a subtree (nodeId) by text, layer name, tag and authored styles. All given filters must match. Returns ids with short info, up to limit (default 50).",
+        {
+            let mut props = query_props.clone();
+            props["limit"] = json!({"type":"integer","minimum":1,"maximum":500});
+            props
+        },
+        vec!["fileId"],
+        true,
     );
     tools
 }
