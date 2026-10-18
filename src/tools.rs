@@ -269,6 +269,21 @@ fn jsx(n: &Node) -> String {
 fn bool_arg(args: &Value, key: &str) -> bool {
     args.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
+/// The icon to place. `name` is the layer name here, unlike `<icon name>` in write_html, so a
+/// set-qualified `name` gets a pointed error instead of a generic one.
+fn icon_name(args: &Value) -> Result<&str> {
+    match (
+        args.get("icon").and_then(Value::as_str),
+        args.get("name").and_then(Value::as_str),
+    ) {
+        (Some(icon), _) => Ok(icon),
+        (None, Some(name)) if name.contains(':') => Err(format!(
+            "Pass the icon as icon: \"{name}\". name is the layer name for insert_icon"
+        )),
+        _ => Err("icon must be a string like \"lucide:check\"".into()),
+    }
+}
+
 fn string_ids(args: &Value, key: &str) -> Result<Vec<String>> {
     array(args, key)?
         .iter()
@@ -1087,7 +1102,7 @@ fn swap_icon(doc: &mut Document, args: &Value) -> Result<Value> {
     let (size, stroke_width, color) = (opt("size")?, opt("strokeWidth")?, opt("color")?);
     let fresh = crate::icons::node(
         doc,
-        string(args, "icon")?,
+        icon_name(args)?,
         crate::icons::Options {
             size: size.as_deref(),
             stroke_width: stroke_width.as_deref(),
@@ -1825,7 +1840,7 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
         "insert_icon" => {
             // Same placement rules as write_html; the icon becomes one layer.
             let opt = |k: &str| args.get(k).map(css_value).transpose();
-            let mut tag = format!("<icon name=\"{}\"", html::escape(string(args, "icon")?));
+            let mut tag = format!("<icon name=\"{}\"", html::escape(icon_name(args)?));
             for (attr, value) in [
                 ("size", opt("size")?),
                 ("stroke-width", opt("strokeWidth")?),
