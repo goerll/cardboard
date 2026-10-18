@@ -179,8 +179,9 @@ tokens against a full specimen instead of a single screen:
    tokens for things shadcn can't express: `--font-display`, `--font-figures`,
    `--display-weight`, `--display-tracking`, `--radius-control` (buttons), `--radius-field`
    (inputs), `--radius-chip` (badges), `--card-ring`, `--card-shadow`, `--field-bg`,
-   `--field-border` and `--signal` (one accent dot). Extension tokens a pasted theme leaves out
-   get neutral defaults derived from its shadcn tokens; set them to give the system its voice.
+   `--field-border` and `--signal` (one accent dot). Anything a pasted theme leaves out (contract or
+   extension tokens) is filled from stock shadcn, light and dark; set those to give the system
+   its voice.
 2. **Open the kit.** `create_kit` builds a "Design system" page with one artboard per mode,
    side by side: swatches, radius and elevation, type scale, buttons in every variant and size,
    badges, form controls, cards, stat cards with a chart, a table, tabs, accordion, alerts,

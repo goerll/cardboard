@@ -1579,7 +1579,7 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                 html::validate_token(name, value)?;
             }
             theme::apply(doc, sets, bool_arg(args, "replace"))?;
-            theme::fill_extensions(doc);
+            theme::fill_defaults(doc);
             Ok(json!({"tokenCount":doc.tokens.len(),"modes":theme::mode_names(doc)}))
         }
         "create_kit" => {
@@ -1590,8 +1590,8 @@ fn mutate(doc: &mut Document, name: &str, args: &Value) -> Result<Value> {
                     .unwrap_or("shadcn");
                 theme::apply(doc, theme::preset(preset)?, false)?;
             }
-            // The kit reads the extension tokens; themes that predate them get neutral defaults.
-            theme::fill_extensions(doc);
+            // The kit reads the whole contract; tokens a theme lacks come from stock shadcn.
+            theme::fill_defaults(doc);
             let modes = match args.get("modes") {
                 Some(_) => string_ids(args, "modes")?,
                 None => theme::mode_names(doc),
@@ -1896,7 +1896,7 @@ pub fn definitions() -> Vec<Value> {
     );
     add(
         "apply_theme",
-        "Seed or replace the token set with a full shadcn theme (light + dark) plus extension tokens the kit uses (missing ones get neutral defaults). preset: shadcn (stock shadcn/ui); css: pasted shadcn/tweakcn CSS (:root, .dark, oklch ok); modes: {light:{--name:value}, dark:{...}}. Merges unless replace is true.",
+        "Seed or replace the token set with a full shadcn theme (light + dark) plus extension tokens the kit uses; tokens the theme leaves out come from the stock shadcn preset (light and dark). preset: shadcn (stock shadcn/ui); css: pasted shadcn/tweakcn CSS (:root, .dark, oklch ok); modes: {light:{--name:value}, dark:{...}}. Merges unless replace is true.",
         json!({"preset":{"type":"string","enum":theme::PRESETS},"css":s,"modes":obj,"replace":{"type":"boolean"}}),
         vec!["fileId"],
         false,

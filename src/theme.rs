@@ -399,10 +399,23 @@ pub fn extension_defaults() -> Tokens {
     .collect()
 }
 
-/// Add the extension tokens a theme left out, keeping any it defines.
-pub fn fill_extensions(doc: &mut Document) {
-    for (name, value) in extension_defaults() {
-        doc.tokens.entry(name).or_insert(value);
+/// Give a partial theme every token of the shadcn contract and the extensions, from the stock
+/// shadcn preset, keeping every value the theme defines. A filled token also gets the preset's
+/// dark value when the file has a dark mode, so pasting only a few colors never leaves the kit
+/// with blank swatches or an empty chart.
+pub fn fill_defaults(doc: &mut Document) {
+    let preset = shadcn_preset();
+    let dark = &preset["dark"];
+    for (name, value) in &preset[BASE_MODE] {
+        if doc.tokens.contains_key(name) {
+            continue;
+        }
+        doc.tokens.insert(name.clone(), value.clone());
+        if let Some(overrides) = doc.modes.get_mut("dark")
+            && let Some(v) = dark.get(name).filter(|v| *v != value)
+        {
+            overrides.insert(name.clone(), v.clone());
+        }
     }
 }
 

@@ -1370,8 +1370,11 @@ fn apply_theme_imports_tweakcn_css_and_exports_shadcn() {
     let doc = s.file(&fid(&s)).unwrap();
     assert_eq!(doc.tokens["--background"], "oklch(1 0 0)");
     assert_eq!(doc.tokens["--font-sans"], "\"Inter\", sans-serif");
-    // Only real differences are stored per mode.
-    assert_eq!(doc.modes["dark"].len(), 2);
+    // Only real differences are stored per mode: the pasted dark values, plus stock shadcn dark
+    // values for the tokens the paste left out.
+    assert_eq!(doc.modes["dark"]["--background"], "oklch(0.145 0 0)");
+    assert!(!doc.modes["dark"].contains_key("--radius"));
+    assert_eq!(doc.tokens["--chart-1"], "oklch(0.646 0.222 41.116)");
     assert!(!doc.tokens.contains_key("--color-background"));
 
     let out = edit(&mut s, "get_tokens", json!({"format":"shadcn"}))["css"]
@@ -1497,4 +1500,45 @@ fn kit_screenshots_carry_every_mode_and_its_icons_are_icon_layers() {
             .iter()
             .all(|n| n["icon"].as_str().unwrap().starts_with("lucide:"))
     );
+}
+
+#[test]
+fn partial_themes_are_completed_from_stock_shadcn_per_mode() {
+    let preset = cardboard::theme::preset("shadcn").unwrap();
+    // Pasted CSS with a dark block: every contract token exists in both modes.
+    let mut s = Store::memory();
+    let css = ":root { --primary: #2563eb; --radius: 0.5rem; }\n.dark { --primary: #60a5fa; }";
+    edit(&mut s, "apply_theme", json!({"css":css}));
+    let doc = s.file(&fid(&s)).unwrap();
+    doc.validate().unwrap();
+    for name in preset["light"].keys() {
+        assert!(doc.tokens.contains_key(name), "missing {name}");
+    }
+    assert_eq!(doc.tokens["--primary"], "#2563eb");
+    assert_eq!(doc.modes["dark"]["--primary"], "#60a5fa");
+    assert_eq!(
+        doc.tokens["--destructive"],
+        preset["light"]["--destructive"]
+    );
+    assert_eq!(
+        doc.modes["dark"]["--destructive"],
+        preset["dark"]["--destructive"]
+    );
+    assert_eq!(doc.modes["dark"]["--chart-1"], preset["dark"]["--chart-1"]);
+    let dark = cardboard::theme::resolved(doc, "dark");
+    for name in preset["dark"].keys() {
+        assert!(dark.contains_key(name), "dark lacks {name}");
+    }
+
+    // Direct values, light only: filled too, and no dark mode appears out of nowhere.
+    let mut s = Store::memory();
+    edit(
+        &mut s,
+        "apply_theme",
+        json!({"modes":{"light":{"--background":"#fff","--foreground":"#111"}}}),
+    );
+    let doc = s.file(&fid(&s)).unwrap();
+    assert_eq!(doc.tokens["--background"], "#fff");
+    assert_eq!(doc.tokens["--chart-3"], preset["light"]["--chart-3"]);
+    assert!(doc.modes.is_empty());
 }
