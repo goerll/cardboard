@@ -282,6 +282,54 @@ fn order(doc: &Document, mains: &BTreeSet<String>) -> Result<Vec<String>> {
     Ok(done)
 }
 
+/// Drop override fields that only repeat what the main now says, unless the instance already
+/// overrode them before this edit (then they stay pinned).
+fn prune(
+    overrides: &mut BTreeMap<String, Override>,
+    old: &BTreeMap<String, Override>,
+    main: &Node,
+) {
+    fn same<T: PartialEq>(v: &Option<T>, main: &T, pinned: bool) -> bool {
+        !pinned && v.as_ref() == Some(main)
+    }
+    let mut layers = BTreeMap::new();
+    walk(main, &mut |n| {
+        layers.insert(n.id.as_str(), n);
+    });
+    let empty = Override::default();
+    for (layer, o) in overrides.iter_mut() {
+        let Some(m) = layers.get(layer.as_str()) else {
+            continue;
+        };
+        let was = old.get(layer).unwrap_or(&empty);
+        if same(&o.name, &m.name, was.name.is_some()) {
+            o.name = None;
+        }
+        if same(&o.text, &m.text, was.text.is_some()) {
+            o.text = None;
+        }
+        if same(&o.visible, &m.visible, was.visible.is_some()) {
+            o.visible = None;
+        }
+        if same(&o.locked, &m.locked, was.locked.is_some()) {
+            o.locked = None;
+        }
+        for (patch, main, was) in [
+            (&mut o.styles, &m.styles, &was.styles),
+            (&mut o.attributes, &m.attributes, &was.attributes),
+        ] {
+            patch.retain(|k, v| {
+                was.contains_key(k)
+                    || match main.get(k) {
+                        Some(m) => m != v,
+                        None => !v.is_empty(),
+                    }
+            });
+        }
+    }
+    overrides.retain(|_, o| !o.is_empty());
+}
+
 /// Bring every instance in line with its main after an edit (`before` from `snapshot`).
 pub fn reconcile(doc: &mut Document, before: Option<&Snapshot>) -> Result<()> {
     let (mains, instances) = scan(doc);
@@ -298,12 +346,17 @@ pub fn reconcile(doc: &mut Document, before: Option<&Snapshot>) -> Result<()> {
                 continue;
             }
             let node = doc.node(id)?;
-            let Some(overrides) = fold(node, main, id) else {
+            let Some(mut overrides) = fold(node, main, id) else {
                 return Err(format!(
                     "\"{}\" ({id}) is an instance of component {of}, so layers cannot be added, removed or moved inside it. Edit the main component, hide layers with set_node_state, or detach_instance first",
                     node.name
                 ));
             };
+            // A bulk edit (a query, or the same ids listed together) that gave the main and
+            // its instances the same new value is a main edit, not an override to pin.
+            if let (Some(i), Ok(now)) = (&node.instance, doc.node(of)) {
+                prune(&mut overrides, &i.overrides, now);
+            }
             node_instance(doc, id)?.overrides = overrides;
         }
     }

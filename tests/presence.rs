@@ -193,3 +193,34 @@ fn query_targeted_edits_respect_and_take_claims() {
     let error = run(&mut s, &a, "update_styles", color(&p)).unwrap_err();
     assert!(error.contains("agent b"), "{error}");
 }
+
+#[test]
+fn component_tools_respect_and_take_claims() {
+    let mut s = Store::memory();
+    let (a, b) = (agent("a"), agent("b"));
+    let frame = artboard(&mut s, &a);
+    let insert = json!({"targetNodeId":frame,"mode":"insert-children","html":"<button><span>Go</span></button>"});
+    let main = ok(&mut s, &a, "write_html", insert)["nodeIds"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // B cannot turn A's layer into a component, nor place instances inside A's frame.
+    assert!(run(&mut s, &b, "create_component", json!({"nodeId":main})).is_err());
+    ok(&mut s, &a, "create_component", json!({"nodeId":main}));
+    let into_frame = json!({"componentId":main,"parentId":frame});
+    assert!(run(&mut s, &b, "insert_instance", into_frame.clone()).is_err());
+    // A's new instance is A's: B can neither override its layers nor detach it.
+    let inst = ok(&mut s, &a, "insert_instance", into_frame)["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let label = s.file(&fid(&s)).unwrap().node(&inst).unwrap().children[0]
+        .id
+        .clone();
+    let error = run(&mut s, &b, "update_styles", color(&label)).unwrap_err();
+    assert!(error.contains("agent a"), "{error}");
+    assert!(run(&mut s, &b, "detach_instance", json!({"nodeIds":[inst]})).is_err());
+    assert!(run(&mut s, &b, "reset_overrides", json!({"nodeIds":[inst]})).is_err());
+    ok(&mut s, &a, "finish_working_on_nodes", json!({}));
+    ok(&mut s, &b, "update_styles", color(&label));
+}

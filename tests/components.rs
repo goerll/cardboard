@@ -423,3 +423,119 @@ fn components_are_one_undo_step_in_a_batch_and_survive_a_save() {
     assert!(doc(&s).node(&a).is_err());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn bulk_query_edits_change_mains_without_pinning_instances() {
+    let mut s = Store::memory();
+    let (frame, main, label) = button(&mut s);
+    let a = instance(&mut s, &main, &frame);
+    let b = instance(&mut s, &main, &frame);
+    // B pins its own label color first.
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[format!("{b}:{label}")],"styles":{"color":"gold"}}]}),
+    );
+    // find_nodes sees the main and the instance layers, and says which is which.
+    let found = edit(&mut s, "find_nodes", json!({"text":"Save"}));
+    let rows = found["nodes"].as_array().unwrap();
+    assert_eq!(rows.len(), 3, "{found}");
+    assert!(rows.iter().any(|r| r["inInstance"] == json!(a)), "{found}");
+    let roots = edit(&mut s, "find_nodes", json!({"tag":"button"}));
+    assert!(
+        roots["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["isComponent"] == json!(true))
+    );
+    assert!(
+        roots["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["instanceOf"] == json!(main))
+    );
+    // A query restyling every white label hits the main and A's copy at once: that is a main
+    // edit, so A keeps following the main and B keeps its own override.
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"query":{"styles":{"color":"white"}},"styles":{"color":"tomato"}}]}),
+    );
+    assert!(node(&s, &a).instance.as_ref().unwrap().overrides.is_empty());
+    assert_eq!(node(&s, &format!("{a}:{label}")).styles["color"], "tomato");
+    assert_eq!(node(&s, &format!("{b}:{label}")).styles["color"], "gold");
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[label],"styles":{"color":"navy"}}]}),
+    );
+    assert_eq!(node(&s, &format!("{a}:{label}")).styles["color"], "navy");
+    assert_eq!(node(&s, &format!("{b}:{label}")).styles["color"], "gold");
+    // A query edit that reaches only an instance layer is still an override.
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"query":{"nodeId":a,"text":"Save"},"styles":{"font-weight":"700"}}]}),
+    );
+    let overrides = &node(&s, &a).instance.as_ref().unwrap().overrides;
+    assert_eq!(overrides[&label].styles["font-weight"], "700");
+}
+
+#[test]
+fn bare_component_ids_and_undo_cover_instances() {
+    let mut s = Store::memory();
+    let (frame, main, label) = button(&mut s);
+    let number = main.trim_start_matches("node-").parse::<u64>().unwrap();
+    let a = edit(
+        &mut s,
+        "insert_instance",
+        json!({"componentId":number,"parentId":frame}),
+    )["nodeId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(node(&s, &a).instance.as_ref().unwrap().component_id, main);
+    edit(
+        &mut s,
+        "set_text_content",
+        json!({"updates":[{"nodeId":label,"textContent":"Send"}]}),
+    );
+    assert_eq!(node(&s, &format!("{a}:{label}")).text, "Send");
+    // One undo reverts the main edit and what it did to the instances.
+    edit(&mut s, "undo", json!({}));
+    assert_eq!(node(&s, &label).text, "Save");
+    assert_eq!(node(&s, &format!("{a}:{label}")).text, "Save");
+    edit(&mut s, "redo", json!({}));
+    assert_eq!(node(&s, &format!("{a}:{label}")).text, "Send");
+}
+
+#[test]
+fn icon_layers_inside_components_follow_the_main() {
+    let mut s = Store::memory();
+    let frame = artboard(&mut s, "Screen");
+    let main = insert(
+        &mut s,
+        &frame,
+        "<div layer-name=\"Chip\"><svg data-icon=\"test:dot\" viewBox=\"0 0 24 24\" width=\"16\" height=\"16\"><circle cx=\"12\" cy=\"12\" r=\"4\" fill=\"currentColor\"/></svg><span>Live</span></div>",
+    )[0]
+    .clone();
+    let icon = node(&s, &main).children[0].id.clone();
+    assert!(node(&s, &icon).markup.is_some());
+    edit(&mut s, "create_component", json!({"nodeId":main}));
+    let a = instance(&mut s, &main, &frame);
+    let inner = format!("{a}:{icon}");
+    assert_eq!(node(&s, &inner).markup, node(&s, &icon).markup);
+    // Recoloring the instance's icon is an override; the icon itself stays the main's.
+    edit(
+        &mut s,
+        "update_styles",
+        json!({"updates":[{"nodeIds":[inner],"styles":{"color":"red"}}]}),
+    );
+    let found = edit(&mut s, "find_nodes", json!({"tag":"icon","nodeId":a}));
+    assert_eq!(found["nodes"][0]["icon"], "test:dot");
+    assert_eq!(found["nodes"][0]["inInstance"], json!(a));
+    let html = html::nodes_html(doc(&s), vec![node(&s, &a)], false);
+    assert!(html.contains("<circle"), "{html}");
+}

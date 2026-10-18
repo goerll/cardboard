@@ -169,6 +169,11 @@ fn targets(doc: &Document, name: &str, args: &Value) -> Vec<(String, Reach)> {
                     .map(|i| (i, Node)),
             );
         }
+        "create_component" => out.extend(id(args, "nodeId").map(|i| (i, Node))),
+        "insert_instance" => out.extend(id(args, "parentId").map(|p| (p, Node))),
+        "detach_instance" | "reset_overrides" => {
+            out.extend(ids(args, "nodeIds").into_iter().map(|i| (i, Subtree)));
+        }
         "delete_nodes" | "start_working_on_nodes" => {
             out.extend(ids(args, "nodeIds").into_iter().map(|i| (i, Subtree)));
             out.extend(
@@ -227,7 +232,7 @@ fn touched(doc: &Document, name: &str, args: &Value, result: &Value) -> Vec<Stri
     match name {
         // Adding to a container holds only the new layers, so others can keep working beside them.
         "write_html" => out.extend(ids(result, "nodeIds")),
-        "create_artboard" | "insert_icon" => out.extend(id(result, "nodeId")),
+        "create_artboard" | "insert_icon" | "insert_instance" => out.extend(id(result, "nodeId")),
         "duplicate_nodes" => out.extend(
             result
                 .get("duplicates")

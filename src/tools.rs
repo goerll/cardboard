@@ -267,7 +267,9 @@ pub(crate) fn normalize_ids(v: &mut Value) {
         Value::Object(map) => {
             for (k, v) in map.iter_mut() {
                 match k.as_str() {
-                    "nodeId" | "nodeIds" | "targetNodeId" | "parentId" => fix(v, "node-"),
+                    "nodeId" | "nodeIds" | "targetNodeId" | "parentId" | "componentId" => {
+                        fix(v, "node-")
+                    }
                     "pageId" | "pageIds" => fix(v, "page-"),
                     "id" => fix(v, "node-"),
                     "styles" | "attributes" | "tokens" | "html" => {}
@@ -908,6 +910,15 @@ fn read(
                     }
                     if n.markup.is_some() {
                         row["icon"] = json!(n.attributes.get("data-icon"));
+                    }
+                    if n.component {
+                        row["isComponent"] = json!(true);
+                    }
+                    if let Some(i) = &n.instance {
+                        row["instanceOf"] = json!(i.component_id);
+                    } else if let Some((instance, _)) = n.id.split_once(':') {
+                        // Edits to this layer become overrides of that instance.
+                        row["inInstance"] = json!(instance);
                     }
                     if !queried.is_empty() {
                         let styles: Styles = n
@@ -2238,7 +2249,7 @@ fn import_image(store: &mut Store, args: &Value) -> Result<Value> {
         let file = store.open(&id)?;
         presence::check(&file.doc, &file.claims, actor, "write_html", &write)?;
     }
-    let inserted = store.transaction(&id, |doc| mutate(doc, "write_html", &write))?;
+    let inserted = store.transaction(&id, |doc| apply(doc, "write_html", &write))?;
     if let Some(actor) = &actor {
         let file = store.files.get_mut(&id).ok_or("File is not open")?;
         presence::record(

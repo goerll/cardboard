@@ -94,7 +94,7 @@ Style names accept CSS or camelCase spelling and are normalized to CSS names. An
 {"fileId": "file-1", "pageId": "page-1", "styles": {"background-color": "#000", "*": {"contains": "var(--color-accent)"}}, "limit": 20}
 ```
 
-It returns `{"nodes": [{"id", "name", "tag", "pageId", "artboardId", "text"?, "styles"?}], "total", "truncated"}`; `styles` holds only the queried properties. `limit` defaults to 50 (max 500).
+It returns `{"nodes": [{"id", "name", "tag", "pageId", "artboardId", "text"?, "icon"?, "isComponent"?, "instanceOf"?, "inInstance"?, "styles"?}], "total", "truncated"}`; `styles` holds only the queried properties. `limit` defaults to 50 (max 500).
 
 `update_styles` and `set_attributes` items, and `delete_nodes` itself, accept a `query` object (the same filters) in place of ids. The whole call is one undo step and reports `matched` and `changed` node counts (`count` for deletes). A query must include a filter or a `nodeId` subtree, so it can never silently match the whole file.
 
