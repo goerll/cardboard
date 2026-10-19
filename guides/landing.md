@@ -57,6 +57,20 @@ clean the rows are.
 - **One dominant move per section.** The visual should be the largest thing in its section and
   the first thing the eye lands on, with the text supporting it. Don't spread effort over three
   small visuals where one large one would carry.
+- **Compose in depth.** The visuals that look most designed are built from two or three layers,
+  not one flat screen: a phone in front of the dashboard it controls, the physical card resting on
+  the transactions screen, a photograph behind a floating panel of the app, a single row lifted out
+  of the table at a larger size with a deeper shadow. Overlap them so they share edges, give the
+  front layer more shadow and the back layer less contrast, and let the arrangement tell the claim
+  (the phone shows the alert that the dashboard caused).
+- **Zoom into the moment.** A whole screen shrunk to fit is the weakest way to show a feature.
+  Crop to the part that proves the claim and set it larger than life, around 1.2 to 1.5 times its
+  real size, cut by the section edge or a mask, with the rest of the product implied around it.
+  Keep the full screen for the hero, and even there let it run off the bottom of the first screen.
+- **One signature piece.** Give the page one crafted art piece that nobody else's page has, often
+  in the hero or the first section after it: a rendered object built from gradients and highlights,
+  a mesh of colour, a field of hundreds of small marks forming a shape, an isometric drawing of the
+  system. It's what visitors remember; it should be made from the page's world and motifs.
 - **Light and material.** Commit to a dominant colour and use the accent sharply and rarely;
   timid, evenly spread palettes look generated. Vary the ground between sections (light, dark,
   photo, saturated) so the page has rhythm instead of one long sheet. Keep one light source and
