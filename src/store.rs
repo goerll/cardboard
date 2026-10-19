@@ -126,6 +126,12 @@ pub fn write_document(path: &Path, doc: &Document) -> Result<()> {
     .map_err(|e| e.to_string())?;
     write_atomic(path, &bytes)
 }
+/// The `settings` object of a library's meta file, if it can be read and has one.
+fn disk_settings(dir: &Path) -> Option<Value> {
+    let meta: Value = serde_json::from_slice(&fs::read(dir.join(META)).ok()?).ok()?;
+    meta.get("settings").filter(|s| !s.is_null()).cloned()
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
@@ -374,16 +380,23 @@ impl Store {
         dirs
     }
     /// The Unsplash access key: `UNSPLASH_ACCESS_KEY`, else the library setting `unsplashAccessKey`.
+    /// Settings are read fresh from the library file, so a key added while Cardboard runs
+    /// works without a restart.
     pub fn unsplash_key(&self) -> Option<String> {
+        let settings = self.settings();
         std::env::var("UNSPLASH_ACCESS_KEY")
             .ok()
-            .or_else(|| {
-                self.meta.settings["unsplashAccessKey"]
-                    .as_str()
-                    .map(String::from)
-            })
+            .or_else(|| settings["unsplashAccessKey"].as_str().map(String::from))
             .map(|k| k.trim().to_string())
             .filter(|k| !k.is_empty())
+    }
+    /// Library settings. The library file on disk owns them (people and agents edit it by
+    /// hand); the copy loaded at startup is only a fallback when the file can't be read.
+    pub fn settings(&self) -> Value {
+        self.library
+            .as_deref()
+            .and_then(disk_settings)
+            .unwrap_or_else(|| self.meta.settings.clone())
     }
     /// Older files embed images as base64 `data:` URLs; move them into the asset store when the
     /// file opens. The rewrite is saved like an edit but is not an undo step.
@@ -634,6 +647,11 @@ impl Store {
             && !self.immediate
             && let Some(dir) = &self.library
         {
+            // Cardboard never edits settings itself; keep whatever the file holds now so a
+            // hand-added key isn't overwritten by the copy loaded at startup.
+            if let Some(settings) = disk_settings(dir) {
+                self.meta.settings = settings;
+            }
             match serde_json::to_vec_pretty(&self.meta) {
                 Ok(bytes) => match write_atomic(&dir.join(META), &bytes) {
                     Ok(()) => self.meta_dirty = false,

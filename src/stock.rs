@@ -111,7 +111,7 @@ pub fn search(args: &Value, unsplash_key: Option<&str>) -> Result<Value> {
     let provider = args.get("provider").and_then(Value::as_str);
     let use_unsplash = match (provider, unsplash_key) {
         (Some("unsplash"), None) => {
-            return Err("Unsplash search needs an access key: set UNSPLASH_ACCESS_KEY (or the library setting unsplashAccessKey) and restart Cardboard. Without a key, omit provider to search Openverse's openly licensed images.".into());
+            return Err("Unsplash search needs an access key: set UNSPLASH_ACCESS_KEY, or add unsplashAccessKey under settings in the library file .cardboard-library.json (read on each call, no restart needed). Without a key, omit provider to search Openverse's openly licensed images.".into());
         }
         (Some("unsplash"), Some(_)) | (None, Some(_)) => true,
         (Some("openverse") | None, _) => false,

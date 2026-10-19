@@ -1837,3 +1837,29 @@ fn write_html_ignores_indentation_inside_svg_groups() {
         "{markup}"
     );
 }
+
+#[test]
+fn library_settings_added_while_running_are_used_and_kept() {
+    let dir = temp_dir("settings-reload");
+    let mut s = Store::library(&dir, None).unwrap();
+    // Startup wrote no settings; something then marks the meta dirty (a new tab).
+    edit(&mut s, "create_file", json!({"name":"Shop"}));
+    s.flush().unwrap();
+    let meta_path = dir.join(".cardboard-library.json");
+    let mut meta: Value = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+    assert!(meta["settings"].is_null());
+    // The key is added by hand while the app runs.
+    meta["settings"] = json!({"unsplashAccessKey":" abc123 "});
+    std::fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
+    assert_eq!(s.settings()["unsplashAccessKey"], " abc123 ");
+    if std::env::var("UNSPLASH_ACCESS_KEY").is_err() {
+        assert_eq!(s.unsplash_key().as_deref(), Some("abc123"));
+    }
+    // Saving tabs again must not drop the hand-added key.
+    edit(&mut s, "create_file", json!({"name":"Blog"}));
+    s.flush().unwrap();
+    let saved: Value = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+    assert_eq!(saved["settings"]["unsplashAccessKey"], " abc123 ");
+    assert_eq!(saved["tabs"].as_array().unwrap().len(), 2);
+    std::fs::remove_dir_all(dir).unwrap();
+}
