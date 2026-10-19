@@ -149,7 +149,9 @@ and go through it as an editor:
    size, consistent space between sections.
 4. Reread every heading out loud. Rewrite the ones that sound like ad copy into plain statements.
 5. Compare neighbouring sections: same layout, same scale, same ground twice in a row means one
-   of them should change.
+   of them should change. At least one section should sit on a saturated colour field or a
+   full-bleed photograph; a page of only light and dark neutrals reads timid however well it's
+   composed.
 6. Cover the text of each section with your hand (or look at its screenshot at thumbnail size).
    If what's left is boxes and lines, the section still needs its visual idea. Compare each
    section with the hero: if the hero is the only part that looks designed, the later sections
